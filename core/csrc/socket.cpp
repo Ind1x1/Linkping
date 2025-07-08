@@ -57,7 +57,6 @@ int Socket::openServerSocket(int port)
         return -1;
     }
 
-    // 使用RAII确保资源释放
     std::unique_ptr<addrinfo, decltype(&freeaddrinfo)> res_guard(res, freeaddrinfo);
 
     for (t = res; t; t = t->ai_next) {

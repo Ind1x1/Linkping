@@ -142,6 +142,7 @@ int Server::main(int argc, char *argv[]) {
         std::cerr << "gettimeofday failed: " << strerror(errno) << "!" << std::endl;
         return 1; 
     }
-    // 这里写server逻辑
+    
+    //FIXME:
     return 0;
 }

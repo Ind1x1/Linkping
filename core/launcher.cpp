@@ -59,7 +59,7 @@ int main(int argc, char *argv[])
         std::cout << "\n" << std::endl;
         return Server::main(argc - 1, argv + 1);
     } else if (mode == "client"){
-        std::cout << "Linkping started in server mode." << std::endl;
+        std::cout << "Linkping started in client mode." << std::endl;
         std::cout << "\n" << std::endl;
         return Client::main(argc - 1, argv + 1);
     }
