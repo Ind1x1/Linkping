@@ -37,9 +37,10 @@ void Client::usage(const char *argv0){
               << " start linkping test\n"
               << "Options: \n"
               << " -p, --port=PORT    Set the port to listen on (default: 18515)\n"
-              << " -s, --size=SIZE    Set the size of the message to send (default: 4096)\n"
-              << " -n, --iters=ITERS  Set the number of iterations to run (default: 1000)\n"
-              << " -a, --addr=ADDR    Set the address to connect to (default: 127.0.0.1)\n"
+              << " -s, --size=SIZE    Set the size of the message to send (default: 100000)\n"
+              << " -n, --iters=ITERS  Set the number of iterations to run (default: 100)\n"
+              << " -t, --type=TYPE    Set the type of the message to send (default: float)\n"
+              << " -a, --addr=ADDR    Set the address to connect to\n"
               << std::endl;
 }
 
@@ -51,6 +52,7 @@ int Client::parse_command_line(int argc, char *argv[], user_params &usr_par)
             { "port",          1, nullptr, 'p' },
             { "size",          1, nullptr, 's' },
             { "iters",         1, nullptr, 'n' },
+            { "type",          1, nullptr, 't' },
             { "addr",          1, nullptr, 'a' },
             { 0 }
         };
@@ -70,6 +72,9 @@ int Client::parse_command_line(int argc, char *argv[], user_params &usr_par)
             break;
         case 'n':
             usr_par.iters = strtol(optarg, nullptr, 0);
+            break;
+        case 't':
+            usr_par.type = std::string(optarg);
             break;
         case 'a':
             utils::get_addr(std::string(optarg), (struct sockaddr *) &usr_par.hostaddr);
@@ -93,11 +98,10 @@ int Client::parse_command_line(int argc, char *argv[], user_params &usr_par)
 
 void* Client::thread_main(void* arg) {
     ThreadArgs* args = static_cast<ThreadArgs*>(arg);
+    //TODO:
+    Client::user_params usr_par = args->usr_par;
     int rank = args->rank;
     int device_count = args->device_count;
-    int port = args->port;
-    unsigned long size = args->size;
-    int iters = args->iters;
     ncclUniqueId nccl_id = args->ncclId;
 
     CUDACHECK(cudaSetDevice(rank));
@@ -108,21 +112,25 @@ void* Client::thread_main(void* arg) {
     float *recv_ptr;
     cudaStream_t s;
 
-    CUDACHECK(cudaMalloc(&send_ptr, 10000 * sizeof(float)));
-    CUDACHECK(cudaMalloc(&recv_ptr, 10000 * sizeof(float)));
+    CUDACHECK(cudaMalloc(&send_ptr, usr_par.size * sizeof(float)));
+    CUDACHECK(cudaMalloc(&recv_ptr, usr_par.size * sizeof(float)));
     CUDACHECK(cudaStreamCreate(&s));
 
-
-    InitData(send_ptr, 10000 * sizeof(float), ncclFloat, s);
-    NCCLCHECK(ncclAllReduce(send_ptr, recv_ptr, 10000, ncclFloat, ncclSum, comm, s));
-
-    std::cout << "AllReduce done." << std::endl;
+    InitData(send_ptr, usr_par.size * sizeof(float), ncclFloat, s);
+    
+    for(int i = 0; i < usr_par.iters; i++){
+        LINKPING_TIMER("ncclAllReduce", 
+                    NCCLCHECK(ncclAllReduce(send_ptr, recv_ptr, usr_par.size, ncclFloat, ncclSum, comm, s));
+                    CUDACHECK(cudaStreamSynchronize(s)), s);
+        if (rank == 0){
+            printf("==============================================\n");
+        }
+    }
 
     CUDACHECK(cudaStreamSynchronize(s));
     CUDACHECK(cudaFree(send_ptr));
     CUDACHECK(cudaFree(recv_ptr));
     CUDACHECK(cudaStreamDestroy(s));
-
     NCCLCHECK(ncclCommDestroy(comm));
     return nullptr;
 }
@@ -170,9 +178,7 @@ int Client::main(int argc, char *argv[]) {
 
     ThreadArgs thread_args[device_count];
     for (int i = 0; i < device_count; i++) {
-        thread_args[i].port = usr_par.port;
-        thread_args[i].size = usr_par.size;
-        thread_args[i].iters = usr_par.iters;
+        thread_args[i].usr_par = usr_par;
         thread_args[i].ncclId = ncclId;
         thread_args[i].rank = i;
         thread_args[i].device_count = device_count;
@@ -188,7 +194,7 @@ int Client::main(int argc, char *argv[]) {
         pthread_join(threads[i], NULL);
     }
 
-    std::cout << "All threads joined." << std::endl;
+    std::cout << "All threads joined. " << std::endl;
     //FIXME:
 
     return 0;

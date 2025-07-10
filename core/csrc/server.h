@@ -26,8 +26,9 @@ public:
     struct user_params {
         int                   persistent = 0;
         int                   port = 18515;
-        unsigned long         size = 4096;
-        int                   iters = 1000;
+        unsigned long         size = 10000;
+        int                   iters = 10;
+        std::string           type = "float";
         int                   num_sges = 0;
         struct sockaddr       hostaddr{};
         int                   rdma = 0;
@@ -54,13 +55,7 @@ public:
 
 private:
     struct ThreadArgs {
-        int                   persistent = 0;
-        int                   port = 18515;
-        unsigned long         size = 4096;
-        int                   iters = 1000;
-        int                   num_sges = 0;
-        int                   rdma = 0;
-        int                   nvlink = 0;
+        Server::user_params   usr_par;
         int                   rank;
         int                   device_count;
         ncclUniqueId          ncclId;

@@ -22,6 +22,7 @@ limitations under the License.
 #include <nccl.h>
 #include <stdio.h>
 #include <pthread.h>
+#include <functional>
 
 #define CUDACHECK(cmd)                                                                              \
     do {                                                                                            \
@@ -56,6 +57,17 @@ typedef enum {
     } while (0)
 
 #define DEFAULT_DEVICES_NUM 8
+
+class LinkPingTimer {
+public:
+    static void TimerProfile(const char* op_name, std::function<void()> func, cudaStream_t stream);
+}
+
+//LINKPING_TIMER("ncclAllReduce", 
+//               NCCLCHECK(ncclAllReduce(send_ptr, recv_ptr, 10000, ncclFloat, ncclSum, comm, s)); 
+//               CUDACHECK(cudaStreamSynchronize(s)), s);
+#define LINKPING_TIMER(name, code_block, stream) \\
+    LinkPingTimer::TimerProfile(name, [&]() { code_block; }, stream)
 
 template<typename T>
 __global__ void InitDataKernel(T*data, size_t size);

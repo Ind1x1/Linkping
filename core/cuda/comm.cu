@@ -29,6 +29,22 @@ template __global__ void InitDataKernel<int>(int*, size_t);
 template __global__ void InitDataKernel<int64_t>(int64_t*, size_t);
 
 
+void LinkPingTimer::TimerProfile(const char* op_name, std::function<void()> func, cudaStream_t stream){
+    cudaEvent_t start, stop;
+    CUDACHECK(cudaEventCreate(&start));
+    CUDACHECK(cudaEventCreate(&stop));
+    CUDACHECK(cudaEventRecord(start, stream));
+    func();
+    CUDACHECK(cudaEventRecord(stop, stream));
+    CUDACHECK(cudaEventSynchronize(stop));
+    cudaEventElapsedTime(&elapsed_time, start, stop);
+
+    printf("%s: %f ms\n", op_name, elapsed_time);
+    
+    cudaEventDestroy(start);
+    cudaEventDestroy(stop);
+}
+
 
 void AllReduceGetBw(size_t count, int typesize, double sec, double* algBw, double* busBw, int nranks) {
     double baseBw = (double)(count * typesize) / 1.0E9 / sec;
