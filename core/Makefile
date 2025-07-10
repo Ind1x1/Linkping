@@ -1,9 +1,11 @@
 CXX = g++
-CXXFLAGS = -std=c++17 -Icsrc -Wall -O2
-LDFLAGS = -lnccl -lcudart
+NVCC = nvcc
+CXXFLAGS = -std=c++17 -Icore/csrc -Icore -I/usr/local/cuda/include -Wall -02
+NVCCFLAGS = -std=c++17 -Icore/csrc -Icore -I/usr/local/cuda/include -02
+LDFLAGS = -L/usr/local/cuda/lib64 -lnccl -lcudart -lpthread
 
-SRCS = launcher.cpp csrc/server.cpp csrc/client.cpp csrc/utils.cpp csrc/socket.cpp cuda/comm.cu
-OBJS = $(SRCS:.cpp=.o) $(SRCS:.cu=.o)
+SRCS = core/launcher.cpp core/csrc/server.cpp core/csrc/client.cpp core/csrc/utils.cpp core/csrc/socket.cpp core/cuda/comm.cu
+OBJS = core/launcher.o core/csrc/server.o core/csrc/client.o core/csrc/utils.o core/csrc/socket.o core/cuda/comm.o
 
 linkping: $(OBJS)
 	$(CXX) $(CXXFLAGS) -o $@ $(OBJS) $(LDFLAGS)
@@ -15,4 +17,6 @@ linkping: $(OBJS)
 	nvcc $(CXXFLAGS) -c $< -o $@
 
 clean:
-	rm -f launcher.o csrc/server.o csrc/client.o csrc/utils.o csrc/socket.o cuda/comm.o linkping
+	rm -rf core/launcher.o core/csrc/server.o core/csrc/client.o core/csrc/utils.o core/csrc/socket.o core/cuda/comm.o linkping
+
+.PHONY: clean

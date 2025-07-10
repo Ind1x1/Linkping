@@ -17,6 +17,7 @@ limitations under the License.
 #pragma once
 #include <netdb.h>
 #include <string>
+#include <nccl.h>
 
 #define RDMA_ACK_MSG "Linkping rdma_task completed"
 
@@ -25,8 +26,8 @@ limitations under the License.
 class Client {
 public:
     struct user_params {
-        int                     port = 4096;
-        unsigned long           size = 4096;
+        int                     port = 18515;
+        unsigned long           size = 10000;
         int                     iters= 10000;
         std::string             servername;
         struct sockaddr         hostaddr{};

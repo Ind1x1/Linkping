@@ -14,10 +14,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-#include "core/csrc/socket.h"
-#include "core/csrc/utils.h"
-#include "core/csrc/server.h"
-#include "core/csrc/client.h"
+#include "socket.h"
+#include "utils.h"
+#include "server.h"
+#include "client.h"
 
 #include <iostream>
 #include <memory>

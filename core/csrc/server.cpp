@@ -14,11 +14,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-#include "core/csrc/server.h"
-#include "core/csrc/socket.h"
-#include "core/csrc/utils.h"
+#include "server.h"
+#include "socket.h"
+#include "utils.h"
 
-#include "core/cuda/comm.cuh"
+#include "../cuda/comm.cuh"
 
 #include <iostream>
 #include <getopt.h>
@@ -27,6 +27,7 @@ limitations under the License.
 #include <signal.h>
 #include <memory>
 #include <unistd.h>
+#include <cuda_runtime.h>
 
 int debug;
 int debug_fast_path;
@@ -129,6 +130,7 @@ void* Server::thread_main(void* arg) {
     int nvlink = args->nvlink;
     ncclUniqueId nccl_id = args->ncclId;
 
+    CUDACHECK(cudaSetDevice(rank));
     ncclComm_t comm;
     NCCLCHECK(ncclCommInitRank(&comm, device_count * 2, nccl_id, rank));
     

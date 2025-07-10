@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-#include "core/csrc/utils.h"
+#include "utils.h"
 
 #include <iostream>
 #include <cstring>

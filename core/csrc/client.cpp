@@ -14,11 +14,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-#include "core/csrc/client.h"
-#include "core/csrc/socket.h"
-#include "core/csrc/utils.h"
+#include "client.h"
+#include "socket.h"
+#include "utils.h"
 
-#include "core/cuda/comm.cuh"
+#include "../cuda/comm.cuh"
 
 #include <iostream>
 #include <getopt.h>
@@ -27,6 +27,7 @@ limitations under the License.
 #include <signal.h>
 #include <memory>
 #include <unistd.h>
+#include <cuda_runtime.h>
 
 static ncclUniqueId ncclId;
 static int          device_count = DEFAULT_DEVICES_NUM;
@@ -99,8 +100,9 @@ void* Client::thread_main(void* arg) {
     int iters = args->iters;
     ncclUniqueId nccl_id = args->ncclId;
 
+    CUDACHECK(cudaSetDevice(rank));
     ncclComm_t comm;
-    NCCLCHECK(ncclCommInitRank(&comm, device_count * 2, nccl_id, rank));
+    NCCLCHECK(ncclCommInitRank(&comm, device_count * 2, nccl_id, rank + device_count));
 
     float *send_ptr;
     float *recv_ptr;
@@ -171,7 +173,7 @@ int Client::main(int argc, char *argv[]) {
         thread_args[i].size = usr_par.size;
         thread_args[i].iters = usr_par.iters;
         thread_args[i].ncclId = ncclId;
-        thread_args[i].rank = i + device_count;
+        thread_args[i].rank = i;
         thread_args[i].device_count = device_count;
 
         ret_val = pthread_create(&threads[i], NULL, thread_main, &thread_args[i]);

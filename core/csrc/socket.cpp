@@ -13,8 +13,8 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
-#include "core/csrc/socket.h"
-#include "core/csrc/utils.h"
+#include "socket.h"
+#include "utils.h"
 
 #include <iostream>
 #include <cstdio>

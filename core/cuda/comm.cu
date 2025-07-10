@@ -13,7 +13,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
-#include "core/cuda/comm.cuh"
+#include "../cuda/comm.cuh"
 
 template<typename T>
 __global__ void InitDataKernel(T* ptr, size_t size) {
