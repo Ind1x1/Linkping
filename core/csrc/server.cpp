@@ -18,6 +18,7 @@ limitations under the License.
 #include "core/csrc/socket.h"
 #include "core/csrc/utils.h"
 
+#include "core/cuda/comm.cuh"
 
 #include <iostream>
 #include <getopt.h>
@@ -31,6 +32,9 @@ int debug;
 int debug_fast_path;
 
 static volatile int keep_running = 1;
+
+static ncclUniqueId ncclId;
+static int          device_count = DEFAULT_DEVICES_NUM;
 
 void sigint_handler(int dummy)
 {
@@ -112,6 +116,43 @@ int Server::parse_command_line(int argc, char *argv[], user_params &usr_par)
     return 0;
 }
 
+void* Server::thread_main(void* arg) {
+    ThreadArgs* args = static_cast<ThreadArgs*>(arg);
+    int rank = args->rank;
+    int device_count = args->device_count;
+    int persistent = args->persistent;
+    int port = args->port;
+    unsigned long size = args->size;
+    int iters = args->iters;
+    int num_sges = args->num_sges;
+    int rdma = args->rdma;
+    int nvlink = args->nvlink;
+    ncclUniqueId nccl_id = args->ncclId;
+
+    ncclComm_t comm;
+    NCCLCHECK(ncclCommInitRank(&comm, device_count * 2, nccl_id, rank));
+    
+    float *send_ptr;
+    float *recv_ptr;
+    cudaStream_t s;
+
+    CUDACHECK(cudaMalloc(&send_ptr, 10000 * sizeof(float)));
+    CUDACHECK(cudaMalloc(&recv_ptr, 10000 * sizeof(float)));
+    CUDACHECK(cudaStreamCreate(&s));
+
+    InitData(send_ptr, 10000 * sizeof(float), ncclFloat, s);
+    NCCLCHECK(ncclAllReduce(send_ptr, recv_ptr, 10000, ncclFloat, ncclSum, comm, s));
+
+    std::cout << "AllReduce done." << std::endl;
+
+    CUDACHECK(cudaStreamSynchronize(s));
+    CUDACHECK(cudaFree(send_ptr));
+    CUDACHECK(cudaFree(recv_ptr));
+    CUDACHECK(cudaStreamDestroy(s));
+    NCCLCHECK(ncclCommDestroy(comm));
+    return nullptr;
+}
+
 int Server::main(int argc, char *argv[]) {
 
     struct timeval           start;
@@ -143,6 +184,43 @@ int Server::main(int argc, char *argv[]) {
         return 1; 
     }
     
+    NCCLCHECK(ncclGetUniqueId(&ncclId));
+    ssize_t send_size = send(*sockfd_ptr, &ncclId.internal, sizeof(ncclId.internal), 0);
+    if (send_size < 0) {
+        std::cerr << "Failed to send nccl uniqueID to client: "  << std::endl;
+        return 1;
+    }
+    std::cout << "NCCL ID sent to client successfully." << std::endl;
+    
+    NCCLCHECK(ncclGetDeviceCount(&device_count));
+    pthread_t threads[device_count];
+
+    ThreadArgs thread_args[device_count];
+    for (int i = 0; i < device_count; i++) {
+        thread_args[i].persistent = usr_par.persistent;
+        thread_args[i].port = usr_par.port;
+        thread_args[i].size = usr_par.size;
+        thread_args[i].iters = usr_par.iters;
+        thread_args[i].num_sges = usr_par.num_sges;
+        thread_args[i].rdma = usr_par.rdma;
+        thread_args[i].nvlink = usr_par.nvlink;
+        thread_args[i].rank = i;
+        thread_args[i].device_count = device_count;
+        thread_args[i].ncclId = ncclId;
+        
+        ret_val = pthread_create(&threads[i], NULL, thread_main, &thread_args[i]);
+        if (ret_val) {
+            std::cerr << "Failed to create thread " << i << std::endl;
+            return 1;
+        }
+    }
+
+    for (int i = 0; i < device_count; i++) {
+        pthread_join(threads[i], NULL);
+    }
+
+    std::cout << "All threads joined." << std::endl;
     //FIXME:
+
     return 0;
 }

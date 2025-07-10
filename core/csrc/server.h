@@ -51,5 +51,20 @@ public:
      */
     static int parse_command_line(int argc, char *argv[], user_params &usr_par);
 
+private:
+    struct ThreadArgs {
+        int                   persistent = 0;
+        int                   port = 18515;
+        unsigned long         size = 4096;
+        int                   iters = 1000;
+        int                   num_sges = 0;
+        int                   rdma = 0;
+        int                   nvlink = 0;
+        int                   rank;
+        int                   device_count;
+        ncclUniqueId          ncclId;
+    };
+
+    static void* thread_main(void* arg);
    
 };

@@ -1,0 +1,67 @@
+#pragma once
+/*
+Copyright 2025
+Linkping Alibaba Cloude Air (alpha) 2025 Leyi Ye
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+#ifndef COMM_CUH
+#define COMM_CUH
+
+#include <cuda_runtime.h>
+#include <cuda_fp16.h>
+#include <nccl.h>
+#include <stdio.h>
+#include <pthread.h>
+
+#define CUDACHECK(cmd)                                                                              \
+    do {                                                                                            \
+        cudaError_t err = cmd;                                                                      \
+        if (err != cudaSuccess) {                                                                   \
+            printf("Failed: Cuda error %s:%d '%s'\n", __FILE__, __LINE__, cudaGetErrorString(err)); \
+            exit(EXIT_FAILURE);                                                                     \
+        }                                                                                           \
+    } while (0)
+
+#define NCCLCHECK(cmd)                                                                              \
+    do {                                                                                            \
+        ncclResult_t res = cmd;                                                                     \
+        if (res != ncclSuccess) {                                                                   \
+            printf("Failed, NCCL error %s:%d '%s'\n", __FILE__, __LINE__, ncclGetErrorString(res)); \
+            exit(EXIT_FAILURE);                                                                     \
+        }                                                                                           \
+    } while (0)
+
+typedef enum {
+    testSuccess = 0,
+    testError = 1,
+} testResult_t;
+
+#define TESTCHECK(cmd)                                                                              \
+    do {                                                                                            \
+        testResult_t res = cmd;                                                                     \
+        if (res != testSuccess) {                                                                   \
+            printf("Failed, Test error %s:%d '%s'\n", __FILE__, __LINE__, ncclGetErrorString(res)); \
+            exit(EXIT_FAILURE);                                                                     \
+        }                                                                                           \
+    } while (0)
+
+#define DEFAULT_DEVICES_NUM 8
+
+template<typename T>
+__global__ void InitDataKernel(T*data, size_t size);
+
+void InitData(void* data_ptr, size_t size, ncclDataType_t type, cudaStream_t stream);
+
+void AllReduceGetBw(size_t count, int typesize, double sec, double* algBw, double* busBw, int nranks);
+
+#endif // COMM_CUH

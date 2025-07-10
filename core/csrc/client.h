@@ -25,7 +25,6 @@ limitations under the License.
 class Client {
 public:
     struct user_params {
-
         int                     port = 4096;
         unsigned long           size = 4096;
         int                     iters= 10000;
@@ -55,4 +54,15 @@ public:
      * @return int 
      */
     static int parse_command_line(int argc, char *argv[], user_params &usr_par);
+private:
+    struct ThreadArgs {
+        int                     port;
+        unsigned long           size;
+        int                     iters;
+        ncclUniqueId            ncclId;
+        int                     rank;
+        int                     device_count;
+    };
+
+    static void* thread_main(void* arg);
 };

@@ -18,6 +18,7 @@ limitations under the License.
 #include "core/csrc/socket.h"
 #include "core/csrc/utils.h"
 
+#include "core/cuda/comm.cuh"
 
 #include <iostream>
 #include <getopt.h>
@@ -27,6 +28,8 @@ limitations under the License.
 #include <memory>
 #include <unistd.h>
 
+static ncclUniqueId ncclId;
+static int          device_count = DEFAULT_DEVICES_NUM;
 
 void Client::usage(const char *argv0){
     std::cout << "Usage: \n"
@@ -87,6 +90,40 @@ int Client::parse_command_line(int argc, char *argv[], user_params &usr_par)
     return 0;
 }
 
+void* Client::thread_main(void* arg) {
+    ThreadArgs* args = static_cast<ThreadArgs*>(arg);
+    int rank = args->rank;
+    int device_count = args->device_count;
+    int port = args->port;
+    unsigned long size = args->size;
+    int iters = args->iters;
+    ncclUniqueId nccl_id = args->ncclId;
+
+    ncclComm_t comm;
+    NCCLCHECK(ncclCommInitRank(&comm, device_count * 2, nccl_id, rank));
+
+    float *send_ptr;
+    float *recv_ptr;
+    cudaStream_t s;
+
+    CUDACHECK(cudaMalloc(&send_ptr, 10000 * sizeof(float)));
+    CUDACHECK(cudaMalloc(&recv_ptr, 10000 * sizeof(float)));
+    CUDACHECK(cudaStreamCreate(&s));
+
+
+    InitData(send_ptr, 10000 * sizeof(float), ncclFloat, s);
+    NCCLCHECK(ncclAllReduce(send_ptr, recv_ptr, 10000, ncclFloat, ncclSum, comm, s));
+
+    std::cout << "AllReduce done." << std::endl;
+
+    CUDACHECK(cudaStreamSynchronize(s));
+    CUDACHECK(cudaFree(send_ptr));
+    CUDACHECK(cudaFree(recv_ptr));
+    CUDACHECK(cudaStreamDestroy(s));
+
+    NCCLCHECK(ncclCommDestroy(comm));
+    return nullptr;
+}
 
 int Client::main(int argc, char *argv[]) {
 
@@ -114,7 +151,42 @@ int Client::main(int argc, char *argv[]) {
         std::cerr << "Failed to connect to server.\n";
         return 1;
     }
-    //FIXME: 
+    
+    ssize_t recv_size = recv(*sockfd_ptr, &ncclId.internal, sizeof(ncclId.internal), 0);
+    if (recv_size < 0) {
+        std::cerr << "Failed to receive nccl uniqueID from server: " << std::endl;
+        return 1;
+    } else if (recv_size != sizeof(ncclId.internal)) {
+        std::cerr << "Received incomplete nccl uniqueID: " << recv_size << " bytes, expected " 
+                  << sizeof(ncclId.internal) << " bytes" << std::endl;
+        return 1;
+    }
+    std::cout << "nccl uniqueID received from server successfully." << std::endl;
+
+    NCCLCHECK(ncclGetDeviceCount(&device_count));
+    pthread_t threads[device_count];
+
+    for (int i = 0; i < device_count; i++) {
+        thread_args[i].port = usr_par.port;
+        thread_args[i].size = usr_par.size;
+        thread_args[i].iters = usr_par.iters;
+        thread_args[i].ncclId = ncclId;
+        thread_args[i].rank = i + device_count;
+        thread_args[i].device_count = device_count;
+
+        ret_val = pthread_create(&threads[i], NULL, thread_main, &thread_args[i]);
+        if (ret_val) {
+            std::cerr << "Failed to create thread " << i << std::endl;
+            return 1;
+        }
+    }
+
+    for (int i = 0; i < device_count; i++) {
+        pthread_join(threads[i], NULL);
+    }
+
+    std::cout << "All threads joined." << std::endl;
+    //FIXME:
 
     return 0;
 }
