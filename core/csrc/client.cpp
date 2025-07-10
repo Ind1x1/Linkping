@@ -165,9 +165,10 @@ int Client::main(int argc, char *argv[]) {
     }
     std::cout << "nccl uniqueID received from server successfully." << std::endl;
 
-    NCCLCHECK(ncclGetDeviceCount(&device_count));
+    CUDACHECK(cudaGetDeviceCount(&device_count));
     pthread_t threads[device_count];
 
+    ThreadArgs thread_args[device_count];
     for (int i = 0; i < device_count; i++) {
         thread_args[i].port = usr_par.port;
         thread_args[i].size = usr_par.size;

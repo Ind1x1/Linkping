@@ -194,7 +194,7 @@ int Server::main(int argc, char *argv[]) {
     }
     std::cout << "NCCL ID sent to client successfully." << std::endl;
     
-    NCCLCHECK(ncclGetDeviceCount(&device_count));
+    CUDACHECK(cudaGetDeviceCount(&device_count));
     pthread_t threads[device_count];
 
     ThreadArgs thread_args[device_count];

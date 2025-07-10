@@ -17,6 +17,7 @@ limitations under the License.
 #pragma once
 #include <netdb.h>
 #include <string>
+#include <nccl.h>
 
 #define RDMA_ACK_MSG "Linkping rdma_task completed"
 
