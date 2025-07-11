@@ -14,6 +14,22 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 #include "../cuda/comm.cuh"
+#include <cstdio>
+#include <cuda_runtime.h>
+#include <functional>
+
+// 静态成员变量定义
+cudaEvent_t LinkPingTimer::start_event;
+cudaEvent_t LinkPingTimer::stop_event;
+bool LinkPingTimer::events_initialized = false;
+
+void LinkPingTimer::initialize_events() {
+    if (!events_initialized) {
+        CUDACHECK(cudaEventCreate(&start_event));
+        CUDACHECK(cudaEventCreate(&stop_event));
+        events_initialized = true;
+    }
+}
 
 template<typename T>
 __global__ void InitDataKernel(T* ptr, size_t size) {
@@ -28,22 +44,24 @@ template __global__ void InitDataKernel<double>(double*, size_t);
 template __global__ void InitDataKernel<int>(int*, size_t);
 template __global__ void InitDataKernel<int64_t>(int64_t*, size_t);
 
-
-void LinkPingTimer::TimerProfile(const char* op_name, std::function<void()> func, cudaStream_t stream){
-    cudaEvent_t start, stop;
-    float elapsed_time = 0.0f;
-    CUDACHECK(cudaEventCreate(&start));
-    CUDACHECK(cudaEventCreate(&stop));
-    CUDACHECK(cudaEventRecord(start, stream));
-    func();
-    CUDACHECK(cudaEventRecord(stop, stream));
-    CUDACHECK(cudaEventSynchronize(stop));
-    cudaEventElapsedTime(&elapsed_time, start, stop);
-
-    printf("%s: %f ms\n", op_name, elapsed_time);
+void LinkPingTimer::TimerProfile(const char* op_name, std::function<void()> func, cudaStream_t stream, 
+                                 size_t count, int typesize, int nranks) {
+    initialize_events();
     
-    cudaEventDestroy(start);
-    cudaEventDestroy(stop);
+    float elapsed_time = 0.0f;
+    CUDACHECK(cudaEventRecord(start_event, stream));
+    func();
+    CUDACHECK(cudaEventRecord(stop_event, stream));
+    CUDACHECK(cudaEventSynchronize(stop_event));
+    cudaEventElapsedTime(&elapsed_time, start_event, stop_event);
+
+    // 计算带宽
+    double sec = elapsed_time / 1000.0;  // 转换为秒
+    double algBw, busBw;
+    AllReduceGetBw(count, typesize, sec, &algBw, &busBw, nranks);
+
+    printf("%s: %f ms, Algorithm BW: %.2f GB/s, Bus BW: %.2f GB/s\n", 
+           op_name, elapsed_time, algBw, busBw);
 }
 
 void LinkPingTimer::Warmup(const char* op_name, std::function<void()> func, cudaStream_t stream, int warmup_iters) {
@@ -65,6 +83,11 @@ void AllReduceGetBw(size_t count, int typesize, double sec, double* algBw, doubl
 void InitData(void* data_ptr, size_t size, ncclDataType_t type, cudaStream_t stream) {
     size_t threads = 256;
     size_t blocks = (size + threads - 1) / threads;
+
+    size_t max_blocks = 65535;
+    if (blocks > max_blocks) {
+        blocks = max_blocks;
+    }
 
     switch (type) {
         case ncclFloat32:
@@ -88,5 +111,13 @@ void InitData(void* data_ptr, size_t size, ncclDataType_t type, cudaStream_t str
     cudaError_t err = cudaGetLastError();
     if (err != cudaSuccess) {
         fprintf(stderr, "CUDA kernel launch error: %s\n", cudaGetErrorString(err));
+    }
+}
+
+void LinkPingTimer::cleanup() {
+    if (events_initialized) {
+        cudaEventDestroy(start_event);
+        cudaEventDestroy(stop_event);
+        events_initialized = false;
     }
 }

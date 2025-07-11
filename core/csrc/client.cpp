@@ -54,9 +54,10 @@ int Client::parse_command_line(int argc, char *argv[], user_params &usr_par)
             { "iters",         1, nullptr, 'n' },
             { "type",          1, nullptr, 't' },
             { "addr",          1, nullptr, 'a' },
+            { "keep-comm",     0, nullptr, 'k' },
             { 0 }
         };
-        c = getopt_long(argc, argv, "p:s:n:a:", long_options, nullptr);
+        c = getopt_long(argc, argv, "p:s:n:a:k", long_options, nullptr);
         if (c == -1)
             break;
         switch (c) {
@@ -78,6 +79,9 @@ int Client::parse_command_line(int argc, char *argv[], user_params &usr_par)
             break;
         case 'a':
             utils::get_addr(std::string(optarg), (struct sockaddr *) &usr_par.hostaddr);
+            break;
+        case 'k':
+            usr_par.keep_comm = true;
             break;
         }
     }
@@ -135,7 +139,8 @@ void* Client::thread_main(void* arg) {
     int device_count = args->device_count;
     ncclUniqueId nccl_id = args->ncclId;
     int socket_fd = args->socket_fd;
-
+    bool keep_comm = usr_par.keep_comm;
+    
     CUDACHECK(cudaSetDevice(rank));
     ncclComm_t comm;
     NCCLCHECK(ncclCommInitRank(&comm, device_count * 2, nccl_id, rank + device_count));
@@ -157,25 +162,29 @@ void* Client::thread_main(void* arg) {
     }
     Barrier(args);  // 再次同步，确保socket同步完成
 
-    LINKPING_WARMUP("ncclAllReduce", 
-        NCCLCHECK(ncclAllReduce(send_ptr, recv_ptr, usr_par.size, ncclFloat, ncclSum, comm, s)); 
-        CUDACHECK(cudaStreamSynchronize(s)), s, 5);
-    Barrier(args); 
-    for(int i = 0; i < usr_par.iters; i++){
+    int iter_count = 0;
+    do {
+        Barrier(args); 
+        LINKPING_WARMUP("ncclAllReduce", 
+            NCCLCHECK(ncclAllReduce(send_ptr, recv_ptr, usr_par.size, ncclFloat, ncclSum, comm, s)); 
+            CUDACHECK(cudaStreamSynchronize(s)), s, WARMUP_ITERS);
         LINKPING_TIMER("ncclAllReduce", 
                     NCCLCHECK(ncclAllReduce(send_ptr, recv_ptr, usr_par.size, ncclFloat, ncclSum, comm, s));
-                    CUDACHECK(cudaStreamSynchronize(s)), s);
+                    CUDACHECK(cudaStreamSynchronize(s)), s, usr_par.size, sizeof(float), device_count * 2);
+        Barrier(args); 
         if (rank == 0){
-            printf("==============================================\n");
+            printf("\n");
         }
-        Barrier(args);  // 每轮测试后同步
-    }
+        Barrier(args);
+        iter_count++;
+    } while (keep_comm || iter_count < usr_par.iters);
 
     CUDACHECK(cudaStreamSynchronize(s));
     CUDACHECK(cudaFree(send_ptr));
     CUDACHECK(cudaFree(recv_ptr));
     CUDACHECK(cudaStreamDestroy(s));
     NCCLCHECK(ncclCommDestroy(comm));
+    LinkPingTimer::cleanup();
     return nullptr;
 }
 

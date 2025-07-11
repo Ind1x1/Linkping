@@ -33,6 +33,7 @@ public:
         std::string           type = "float";
         int                   num_sges = 0;
         struct sockaddr       hostaddr{};
+        bool                  keep_comm = false;
         int                   rdma = 0;
         int                   nvlink = 0;
     };

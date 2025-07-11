@@ -57,18 +57,28 @@ typedef enum {
     } while (0)
 
 #define DEFAULT_DEVICES_NUM 8
+#define WARMUP_ITERS 5
 
 class LinkPingTimer {
 public:
-    static void TimerProfile(const char* op_name, std::function<void()> func, cudaStream_t stream);
+    static void TimerProfile(const char* op_name, std::function<void()> func, cudaStream_t stream, 
+                           size_t count, int typesize, int nranks);
     static void Warmup(const char* op_name, std::function<void()> func, cudaStream_t stream, int warmup_iters);
+    static void cleanup();
+
+private:
+    static cudaEvent_t start_event;
+    static cudaEvent_t stop_event;
+    static bool events_initialized;
+    static void initialize_events();
 };
 
 //LINKPING_TIMER("ncclAllReduce", 
 //               NCCLCHECK(ncclAllReduce(send_ptr, recv_ptr, 10000, ncclFloat, ncclSum, comm, s)); 
 //               CUDACHECK(cudaStreamSynchronize(s)), s);
-#define LINKPING_TIMER(name, code_block, stream)                                                    \
-    LinkPingTimer::TimerProfile(name, [&]() { code_block; }, stream)
+// 用于 profile
+#define LINKPING_TIMER(name, code_block, stream, count, typesize, nranks) \
+    LinkPingTimer::TimerProfile(name, [&]() { code_block; }, stream, count, typesize, nranks)
 
 // warmup 5 次
 // LINKPING_WARMUP("ncclAllReduce", 
