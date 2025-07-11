@@ -18,6 +18,7 @@ limitations under the License.
 #include "utils.h"
 #include "server.h"
 #include "client.h"
+#include "single.h"
 
 #include <iostream>
 #include <memory>
@@ -47,7 +48,7 @@ int main(int argc, char *argv[])
     }
 
     std::string mode = argv[1];
-    if (mode != "server" && mode != "client"){
+    if (mode != "server" && mode != "client" && mode != "single"){
         std::cerr << "Error: Ineffective working mode\n";
         Server::usage(argv[0]);
         return 1;
@@ -65,6 +66,6 @@ int main(int argc, char *argv[])
     } else if (mode == "single"){
         std::cout << "Linkping started in single mode." << std::endl;
         std::cout << "\n" << std::endl;
-        return Single::main(argc - 1, argv + 1);
+        return Singlep2p::main(argc - 1, argv + 1);
     }
 }

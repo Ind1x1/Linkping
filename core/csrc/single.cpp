@@ -13,7 +13,6 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
-
 #include "single.h"
 #include "utils.h"
 
@@ -27,10 +26,15 @@ limitations under the License.
 #include <memory>
 #include <unistd.h>
 #include <cuda_runtime.h>
+#include <iomanip>
+#include <pthread.h>
+
+#define MAX_GPU 16
+static double bandwidth_matrix[MAX_GPU][MAX_GPU] = {0};
 
 static int          device_count = DEFAULT_DEVICES_NUM;
 
-void Client::Barrier(ThreadArgs* args) {
+void Singlep2p::Barrier(ThreadArgs* args) {
     thread_local int epoch = 0;
     static pthread_mutex_t lock[2] = {PTHREAD_MUTEX_INITIALIZER, PTHREAD_MUTEX_INITIALIZER};
     static pthread_cond_t cond[2] = {PTHREAD_COND_INITIALIZER, PTHREAD_COND_INITIALIZER};
@@ -97,53 +101,89 @@ int Singlep2p::parse_command_line(int argc, char *argv[], user_params &usr_par)
     return 0;
 }
 
-void*  Singlep2p::thread_main(void* arg) {
+void* Singlep2p::thread_main(void* arg) {
     ThreadArgs* args = static_cast<ThreadArgs*>(arg);
-    //TODO:
-    Singlep2p::user_params usr_par = args->usr_par;
-    int rank = args->rank; 
-    bool keep_running = usr_par.keep_running;
-    int dst_rank = (rank + 1) % device_count;
-
-    float *recv_ptr;
-    CUDACHECK(cudaSetDevice(dst_rank));
-    CUDACHECK(cudaMalloc(&recv_ptr, usr_par.size * sizeof(float)));
-
-    CUDACHECK(cudaSetDevice(rank));
+    int rank = args->rank;
+    int device_count = args->device_count;
+    int size = args->usr_par.size;
+    bool keep_running = args->usr_par.keep_running;
+    float** send_ptrs = args->send_ptrs;
+    float** recv_ptrs = args->recv_ptrs;
+    int iters = args->usr_par.iters;
     cudaStream_t s;
-    float *send_ptr;
+    CUDACHECK(cudaSetDevice(rank));
     CUDACHECK(cudaStreamCreate(&s));
-    CUDACHECK(cudaMalloc(&send_ptr, usr_par.size * sizeof(float)));
-
-    InitData(send_ptr, usr_par.size * sizeof(float), ncclFloat, s);
-
+    cudaEvent_t start, end;
+    CUDACHECK(cudaEventCreate(&start));
+    CUDACHECK(cudaEventCreate(&end));
+    printf("rank %d, device %d, stream %p, start %p, end %p\n", rank, rank, s, start, end);
     CUDACHECK(cudaStreamSynchronize(s));
     Barrier(args);
     
-    CUDACHECK(cudaStreamSynchronize(s));
-    Barrier(args);
-
-    if (keep_running){
-        LINKPING_P2P("P2P", Launch_linkpingp2p(send_ptr, recv_ptr, usr_par.size, s), s, usr_par.size, sizeof(float));
-        cudaStreamSynchronize(s);
-        Barrier(args);
-        if (rank == 0){
-            printf("--------------------------------\n");
+    do {
+        int shift = 1;
+        for (int round = 0; round < device_count - 1; ++round) {
+            int dst = (rank + shift) % device_count;
+            if (rank == dst) {
+                continue;
+            }
+            Barrier(args);
+            float* send_ptr = send_ptrs[rank];
+            float* recv_ptr = recv_ptrs[dst];
+            CUDACHECK(cudaStreamSynchronize(s));
+            float total_time_ms = 0.0f;
+            Barrier(args);
+           // warmup
+            for (int k = 0; k < WARMUP_ITERS; ++k) {
+                CUDACHECK(cudaMemcpyPeerAsync(recv_ptr, dst, send_ptr, rank, size * sizeof(float), s));
+            }
+            CUDACHECK(cudaStreamSynchronize(s));
+            for (int k = 0; k < iters; ++k) {
+                CUDACHECK(cudaEventRecord(start, s));
+                CUDACHECK(cudaMemcpyPeerAsync(recv_ptr, dst, send_ptr, rank, size * sizeof(float), s));
+                CUDACHECK(cudaEventRecord(end, s));
+                CUDACHECK(cudaEventSynchronize(end));
+                float elapsed_ms = 0.0f;
+                CUDACHECK(cudaEventElapsedTime(&elapsed_ms, start, end));
+                total_time_ms += elapsed_ms;
+                Barrier(args);
+            }
+            float avg_time_ms = total_time_ms / iters;
+            double seconds = avg_time_ms / 1000.0;
+            double bandwidth = (size * sizeof(float)) / seconds / 1e9;
+            bandwidth_matrix[rank][dst] = bandwidth;
+            Barrier(args);
+            shift = (shift + 1);
         }
         Barrier(args);
-    }
-
-    CUDACHECK(cudaStreamSynchronize(s));
-    CUDACHECK(cudaFree(send_ptr));
-    CUDACHECK(cudaFree(recv_ptr));
-    CUDACHECK(cudaStreamDestroy(s));
+        if (rank == 0) {
+            printf("\nP2P Bandwidth Topo Matrix (GB/s):\n");
+            printf("%6s", " ");
+            for (int dst = 0; dst < device_count; ++dst) {
+                printf("%10d", dst);
+            }
+            printf("\n");
+            for (int src = 0; src < device_count; ++src) {
+                printf("%4d |", src);
+                for (int dst = 0; dst < device_count; ++dst) {
+                    if (src == dst)
+                        printf("%10s", "--");
+                    else
+                        printf("%10.2f", bandwidth_matrix[src][dst]);
+                }
+                printf("\n");
+            }
+            printf("\nTopo test finished.\n\n");
+        }
+        Barrier(args);
+        if (!keep_running) break;
+    } while (1);
     return nullptr;
 }
 
 int Singlep2p::main(int argc, char *argv[]) {
-
     int                      ret_val = 0;
-    Singlep2p::user_params       usr_par;
+    Singlep2p::user_params   usr_par;
 
     ret_val = parse_command_line(argc, argv, usr_par);
     if (ret_val){
@@ -151,29 +191,48 @@ int Singlep2p::main(int argc, char *argv[]) {
     }
 
     CUDACHECK(cudaGetDeviceCount(&device_count));
-    pthread_t threads[device_count];
+    for (int i = 0; i < device_count; ++i) {
+        for (int j = 0; j < device_count; ++j) {
+            if (i != j) {
+                int canAccessPeer = 0;
+                cudaDeviceCanAccessPeer(&canAccessPeer, i, j);
+                if (canAccessPeer) {
+                    cudaSetDevice(i);
+                    cudaDeviceEnablePeerAccess(j, 0);
+                }
+            }
+        }
+    }
 
-    ThreadArgs thread_args[device_count];
+    // 统一分配所有GPU的send/recv指针
+    float* send_ptrs[MAX_GPU];
+    float* recv_ptrs[MAX_GPU];
+    for (int i = 0; i < device_count; ++i) {
+        cudaSetDevice(i);
+        cudaMalloc(&send_ptrs[i], usr_par.size * sizeof(float));
+        cudaMalloc(&recv_ptrs[i], usr_par.size * sizeof(float));
+        InitData(send_ptrs[i], usr_par.size * sizeof(float), ncclFloat, 0);
+    }
+
+    pthread_t threads[MAX_GPU];
+    ThreadArgs thread_args[MAX_GPU];
     for (int i = 0; i < device_count; i++) {
-        thread_args[i].usr_par = usr_par;   
+        thread_args[i].usr_par = usr_par;
         thread_args[i].thread = i;
         thread_args[i].nThreads = device_count;
         thread_args[i].rank = i;
         thread_args[i].device_count = device_count;
-
-        ret_val = pthread_create(&threads[i], NULL, thread_main, &thread_args[i]);
-        if (ret_val) {
-            std::cerr << "Failed to create thread " << i << std::endl;
-            return 1;
-        }
+        thread_args[i].send_ptrs = send_ptrs;
+        thread_args[i].recv_ptrs = recv_ptrs;
+        pthread_create(&threads[i], NULL, thread_main, &thread_args[i]);
     }
-
     for (int i = 0; i < device_count; i++) {
         pthread_join(threads[i], NULL);
     }
-
-    std::cout << "All threads joined. " << std::endl;
-    //FIXME:
-
+    for (int i = 0; i < device_count; ++i) {
+        cudaSetDevice(i);
+        cudaFree(send_ptrs[i]);
+        cudaFree(recv_ptrs[i]);
+    }
     return 0;
 }

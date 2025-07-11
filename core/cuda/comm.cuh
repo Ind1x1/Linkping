@@ -64,6 +64,7 @@ public:
     static void TimerProfile(const char* op_name, std::function<void()> func, cudaStream_t stream, 
                            size_t count, int typesize, int nranks, int rank);
     static void Warmup(const char* op_name, std::function<void()> func, cudaStream_t stream, int warmup_iters);
+    static void P2PProfile(std::function<void()> func, cudaStream_t stream, size_t count, int typesize);
 };
 
 //LINKPING_TIMER("ncclAllReduce", 
@@ -79,14 +80,14 @@ public:
 #define LINKPING_WARMUP(name, code_block, stream, warmup_iters)                                     \
     LinkPingTimer::Warmup(name, [&]() { code_block; }, stream, warmup_iters)
 
-#define LINKPING_P2P(name, code_block, stream, count, typesize)                                     \
-    LinkPingTimer::P2PProfile(name, [&]() { code_block; }, stream, count, typesize)
+#define LINKPING_P2P(code_block, stream, count, typesize)                                     \
+    LinkPingTimer::P2PProfile([&]() { code_block; }, stream, count, typesize)
 
 template<typename T>
 __global__ void InitDataKernel(T*data, size_t size);
 
 extern void InitData(void* data_ptr, size_t size, ncclDataType_t type, cudaStream_t stream);
-
+extern void Launch_linkpingp2p(T *dest, T const *src, size_t num_elems, cudaStream_t stream);
 extern void AllReduceGetBw(size_t count, int typesize, double sec, double* algBw, double* busBw, int nranks);
 
 #endif // COMM_CUH

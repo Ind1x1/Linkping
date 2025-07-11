@@ -1,3 +1,4 @@
+#pragma once
 /*
 Copyright 2025
 Linkping Alibaba Cloude Air (alpha) 2025 Leyi Ye
@@ -13,15 +14,13 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
-
-#pragma once
 #include <netdb.h>
 #include <string>
 
 class Singlep2p {
     public:
         struct user_params {
-            unsigned long         size = 10000;
+            unsigned long         size = 1000000000;
             int                   iters = 10;
             std::string           type = "float";
             bool                  keep_running = false;
@@ -52,10 +51,10 @@ class Singlep2p {
             int                      nThreads;
             int                      rank;
             int                      device_count;
+            float**                  send_ptrs;
+            float**                  recv_ptrs;
         };
     
         static void Barrier(ThreadArgs* args);
-    
         static void* thread_main(void* arg);
-        
 };
