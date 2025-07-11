@@ -28,6 +28,41 @@ template __global__ void InitDataKernel<double>(double*, size_t);
 template __global__ void InitDataKernel<int>(int*, size_t);
 template __global__ void InitDataKernel<int64_t>(int64_t*, size_t);
 
+template<typename T>
+__global__ void linkping_p2p(T *__restrict__ dest, T const *__restrict__ src, size_t num_elems)
+{
+    size_t globalId = blockIdx.x * blockDim.x + threadIdx.x;
+    size_t gridSize = blockDim.x * gridDim.x;
+
+#pragma unroll(5)
+    for (size_t i = globalId; i < num_elems; i += gridSize) {
+        dest[i] = src[i];
+    }
+}
+
+template<typename T>
+void Launch_linkpingp2p(T *dest, T const *src, size_t num_elems, cudaStream_t stream) {
+    int blockSize = 0;
+    int numBlocks = 0;
+    CUDACHECK(cudaOccupancyMaxPotentialBlockSize(&numBlocks, &blockSize, linkping_p2p<T>));
+    linkping_p2p<T><<<numBlocks, blockSize, 0, stream>>>(dest, src, num_elems);
+    CUDACHECK(cudaStreamSynchronize(stream));
+}
+
+void LinkPingTimer::P2PProfile(std::function<void()> func, cudaStream_t stream, size_t count, int typesize) {
+    cudaEvent_t start, stop;
+    float elapsed_time = 0.0f;
+    CUDACHECK(cudaEventCreate(&start));
+    CUDACHECK(cudaEventCreate(&stop));
+    CUDACHECK(cudaEventRecord(start, stream));
+    func();
+    CUDACHECK(cudaEventRecord(stop, stream));
+    CUDACHECK(cudaEventSynchronize(stop));
+    cudaEventElapsedTime(&elapsed_time, start, stop);
+    printf("P2P: %f ms, count: %zu, typesize: %d\n", elapsed_time, count, typesize);
+    cudaEventDestroy(start);
+    cudaEventDestroy(stop);
+}
 
 void LinkPingTimer::TimerProfile(const char* op_name, std::function<void()> func, cudaStream_t stream, 
                                  size_t count, int typesize, int nranks, int rank) {
@@ -41,14 +76,11 @@ void LinkPingTimer::TimerProfile(const char* op_name, std::function<void()> func
     CUDACHECK(cudaEventSynchronize(stop));
     cudaEventElapsedTime(&elapsed_time, start, stop);
     
-    if(rank == 0){
-    // 计算带宽
     double sec = elapsed_time / 1000.0;  // 转换为秒
     double algBw, busBw;
     AllReduceGetBw(count, typesize, sec, &algBw, &busBw, nranks);
         printf("%s: %f ms, count: %zu, typesize: %d, Algorithm BW: %.2f GB/s, Bus BW: %.2f GB/s\n", 
                op_name, elapsed_time, count, typesize, algBw, busBw);
-    }
     
     cudaEventDestroy(start);
     cudaEventDestroy(stop);
