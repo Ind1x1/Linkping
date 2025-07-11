@@ -70,7 +70,7 @@ public:
 //               NCCLCHECK(ncclAllReduce(send_ptr, recv_ptr, 10000, ncclFloat, ncclSum, comm, s)); 
 //               CUDACHECK(cudaStreamSynchronize(s)), s);
 // 用于 profile
-#define LINKPING_TIMER(name, code_block, stream, count, typesize, nranks, rank) \
+#define LINKPING_TIMER(name, code_block, stream, count, typesize, nranks, rank)                     \
     LinkPingTimer::TimerProfile(name, [&]() { code_block; }, stream, count, typesize, nranks, rank)
 
 // warmup 5 次
@@ -78,6 +78,9 @@ public:
 //     NCCLCHECK(ncclAllReduce(send_ptr, recv_ptr, usr_par.size, ncclFloat, ncclSum, comm, s)), s, 5);
 #define LINKPING_WARMUP(name, code_block, stream, warmup_iters)                                     \
     LinkPingTimer::Warmup(name, [&]() { code_block; }, stream, warmup_iters)
+
+#define LINKPING_P2P(name, code_block, stream, count, typesize)                                     \
+    LinkPingTimer::P2PProfile(name, [&]() { code_block; }, stream, count, typesize)
 
 template<typename T>
 __global__ void InitDataKernel(T*data, size_t size);

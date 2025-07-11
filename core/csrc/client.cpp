@@ -139,6 +139,7 @@ void* Client::thread_main(void* arg) {
     int device_count = args->device_count;
     ncclUniqueId nccl_id = args->ncclId;
     int socket_fd = args->socket_fd;
+    bool keep_comm = usr_par.keep_comm;
 
     CUDACHECK(cudaSetDevice(rank));
     ncclComm_t comm;
