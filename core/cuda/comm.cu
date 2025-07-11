@@ -29,7 +29,8 @@ template __global__ void InitDataKernel<int>(int*, size_t);
 template __global__ void InitDataKernel<int64_t>(int64_t*, size_t);
 
 
-void LinkPingTimer::TimerProfile(const char* op_name, std::function<void()> func, cudaStream_t stream){
+void LinkPingTimer::TimerProfile(const char* op_name, std::function<void()> func, cudaStream_t stream, 
+                                 size_t count, int typesize, int nranks) {
     cudaEvent_t start, stop;
     float elapsed_time = 0.0f;
     CUDACHECK(cudaEventCreate(&start));
@@ -40,7 +41,13 @@ void LinkPingTimer::TimerProfile(const char* op_name, std::function<void()> func
     CUDACHECK(cudaEventSynchronize(stop));
     cudaEventElapsedTime(&elapsed_time, start, stop);
 
-    printf("%s: %f ms\n", op_name, elapsed_time);
+    // 计算带宽
+    double sec = elapsed_time / 1000.0;  // 转换为秒
+    double algBw, busBw;
+    AllReduceGetBw(count, typesize, sec, &algBw, &busBw, nranks);
+
+    printf("%s: %f ms, Algorithm BW: %.2f GB/s, Bus BW: %.2f GB/s\n", 
+           op_name, elapsed_time, algBw, busBw);
     
     cudaEventDestroy(start);
     cudaEventDestroy(stop);
@@ -65,6 +72,11 @@ void AllReduceGetBw(size_t count, int typesize, double sec, double* algBw, doubl
 void InitData(void* data_ptr, size_t size, ncclDataType_t type, cudaStream_t stream) {
     size_t threads = 256;
     size_t blocks = (size + threads - 1) / threads;
+
+    size_t max_blocks = 65535;
+    if (blocks > max_blocks) {
+        blocks = max_blocks;
+    }
 
     switch (type) {
         case ncclFloat32:
