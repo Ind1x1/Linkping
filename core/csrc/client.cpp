@@ -54,9 +54,10 @@ int Client::parse_command_line(int argc, char *argv[], user_params &usr_par)
             { "iters",         1, nullptr, 'n' },
             { "type",          1, nullptr, 't' },
             { "addr",          1, nullptr, 'a' },
+            { "keep-comm",     0, nullptr, 'k' },
             { 0 }
         };
-        c = getopt_long(argc, argv, "p:s:n:a:", long_options, nullptr);
+        c = getopt_long(argc, argv, "p:s:n:a:k", long_options, nullptr);
         if (c == -1)
             break;
         switch (c) {
@@ -78,6 +79,9 @@ int Client::parse_command_line(int argc, char *argv[], user_params &usr_par)
             break;
         case 'a':
             utils::get_addr(std::string(optarg), (struct sockaddr *) &usr_par.hostaddr);
+            break;
+        case 'k':
+            usr_par.keep_comm = true;
             break;
         }
     }
@@ -151,25 +155,40 @@ void* Client::thread_main(void* arg) {
     InitData(send_ptr, usr_par.size * sizeof(float), ncclFloat, s);
 
     CUDACHECK(cudaStreamSynchronize(s));
-    Barrier(args);  // 本地线程同步
-    if (rank == 0) {
-        socket_sync(socket_fd);  // 只有rank=0的线程做socket同步
-    }
-    Barrier(args);  // 再次同步，确保socket同步完成
+    Barrier(args);
+    if (rank == 0) {socket_sync(socket_fd); }
+    Barrier(args); 
 
-    for(int i = 0; i < usr_par.iters; i++){
-        Barrier(args);
-        LINKPING_WARMUP("ncclAllReduce", 
-                        NCCLCHECK(ncclAllReduce(send_ptr, recv_ptr, usr_par.size, ncclFloat, ncclSum, comm, s)); 
-                        CUDACHECK(cudaStreamSynchronize(s)), s, 5);
-        LINKPING_TIMER("ncclAllReduce", 
-                       NCCLCHECK(ncclAllReduce(send_ptr, recv_ptr, usr_par.size, ncclFloat, ncclSum, comm, s)); 
-                       CUDACHECK(cudaStreamSynchronize(s)), s, usr_par.size, sizeof(float), device_count * 2);
-        Barrier(args);
-        if (rank == 0){
-            printf("==============================================\n");
+    if(keep_comm){
+        while(1){
+            Barrier(args);
+            LINKPING_WARMUP("ncclAllReduce", 
+                            NCCLCHECK(ncclAllReduce(send_ptr, recv_ptr, usr_par.size, ncclFloat, ncclSum, comm, s)); 
+                            CUDACHECK(cudaStreamSynchronize(s)), s, WARMUP_ITERS);
+            LINKPING_TIMER("ncclAllReduce", 
+                           NCCLCHECK(ncclAllReduce(send_ptr, recv_ptr, usr_par.size, ncclFloat, ncclSum, comm, s)); 
+                           CUDACHECK(cudaStreamSynchronize(s)), s, usr_par.size, sizeof(float), device_count * 2, rank);
+            Barrier(args);
+            if (rank == 0){
+                printf("\n");
+            }
+            Barrier(args);
         }
-        Barrier(args);  // 每轮测试后同步
+    } else {
+        for(int i = 0; i < usr_par.iters; i++){
+            Barrier(args);
+            LINKPING_WARMUP("ncclAllReduce", 
+                            NCCLCHECK(ncclAllReduce(send_ptr, recv_ptr, usr_par.size, ncclFloat, ncclSum, comm, s)); 
+                            CUDACHECK(cudaStreamSynchronize(s)), s, WARMUP_ITERS);
+            LINKPING_TIMER("ncclAllReduce", 
+                           NCCLCHECK(ncclAllReduce(send_ptr, recv_ptr, usr_par.size, ncclFloat, ncclSum, comm, s)); 
+                           CUDACHECK(cudaStreamSynchronize(s)), s, usr_par.size, sizeof(float), device_count * 2, rank);
+            Barrier(args);
+            if (rank == 0){
+                printf("\n");
+            }
+            Barrier(args); 
+        }
     }
 
     CUDACHECK(cudaStreamSynchronize(s));

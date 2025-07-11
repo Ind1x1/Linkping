@@ -186,26 +186,43 @@ void* Server::thread_main(void* arg) {
     if (rank == 0) {socket_sync(socket_fd);}
     Barrier(args);
 
-    LINKPING_WARMUP("ncclAllReduce", 
-                    NCCLCHECK(ncclAllReduce(send_ptr, recv_ptr, usr_par.size, ncclFloat, ncclSum, comm, s)); 
-                    CUDACHECK(cudaStreamSynchronize(s)), s, 5);
-    Barrier(args); 
-    for(int i = 0; i < usr_par.iters; i++){
-        LINKPING_TIMER("ncclAllReduce", 
-                       NCCLCHECK(ncclAllReduce(send_ptr, recv_ptr, usr_par.size, ncclFloat, ncclSum, comm, s)); 
-                       CUDACHECK(cudaStreamSynchronize(s)), s);
-        if (rank == 0){
-            printf("\n");
+    if(keep_comm){
+        while(1){
+            Barrier(args);
+            LINKPING_WARMUP("ncclAllReduce", 
+                            NCCLCHECK(ncclAllReduce(send_ptr, recv_ptr, usr_par.size, ncclFloat, ncclSum, comm, s)); 
+                            CUDACHECK(cudaStreamSynchronize(s)), s, WARMUP_ITERS);
+            LINKPING_TIMER("ncclAllReduce", 
+                           NCCLCHECK(ncclAllReduce(send_ptr, recv_ptr, usr_par.size, ncclFloat, ncclSum, comm, s)); 
+                           CUDACHECK(cudaStreamSynchronize(s)), s, usr_par.size, sizeof(float), device_count * 2, rank);
+            Barrier(args);
+            if (rank == 0){
+                printf("\n");
+            }
+            Barrier(args);
         }
-        Barrier(args);
+    } else {
+        for(int i = 0; i < usr_par.iters; i++){
+            Barrier(args);
+            LINKPING_WARMUP("ncclAllReduce", 
+                            NCCLCHECK(ncclAllReduce(send_ptr, recv_ptr, usr_par.size, ncclFloat, ncclSum, comm, s)); 
+                            CUDACHECK(cudaStreamSynchronize(s)), s, WARMUP_ITERS);
+            LINKPING_TIMER("ncclAllReduce", 
+                           NCCLCHECK(ncclAllReduce(send_ptr, recv_ptr, usr_par.size, ncclFloat, ncclSum, comm, s)); 
+                           CUDACHECK(cudaStreamSynchronize(s)), s, usr_par.size, sizeof(float), device_count * 2, rank);
+            Barrier(args);
+            if (rank == 0){
+                printf("\n");
+            }
+            Barrier(args); 
+        }
     }
-
+    
     CUDACHECK(cudaStreamSynchronize(s));
     CUDACHECK(cudaFree(send_ptr));
     CUDACHECK(cudaFree(recv_ptr));
     CUDACHECK(cudaStreamDestroy(s));
     NCCLCHECK(ncclCommDestroy(comm));
-    LinkPingTimer::cleanup();
     return nullptr;
 }
 
