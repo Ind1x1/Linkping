@@ -37,9 +37,10 @@ void Client::usage(const char *argv0){
               << " start linkping test\n"
               << "Options: \n"
               << " -p, --port=PORT    Set the port to listen on (default: 18515)\n"
-              << " -s, --size=SIZE    Set the size of the message to send (default: 4096)\n"
-              << " -n, --iters=ITERS  Set the number of iterations to run (default: 1000)\n"
-              << " -a, --addr=ADDR    Set the address to connect to (default: 127.0.0.1)\n"
+              << " -s, --size=SIZE    Set the size of the message to send (default: 100000)\n"
+              << " -n, --iters=ITERS  Set the number of iterations to run (default: 100)\n"
+              << " -t, --type=TYPE    Set the type of the message to send (default: float)\n"
+              << " -a, --addr=ADDR    Set the address to connect to\n"
               << std::endl;
 }
 
@@ -51,10 +52,12 @@ int Client::parse_command_line(int argc, char *argv[], user_params &usr_par)
             { "port",          1, nullptr, 'p' },
             { "size",          1, nullptr, 's' },
             { "iters",         1, nullptr, 'n' },
+            { "type",          1, nullptr, 't' },
             { "addr",          1, nullptr, 'a' },
+            { "keep-comm",     0, nullptr, 'k' },
             { 0 }
         };
-        c = getopt_long(argc, argv, "p:s:n:a:", long_options, nullptr);
+        c = getopt_long(argc, argv, "p:s:n:a:k", long_options, nullptr);
         if (c == -1)
             break;
         switch (c) {
@@ -71,8 +74,14 @@ int Client::parse_command_line(int argc, char *argv[], user_params &usr_par)
         case 'n':
             usr_par.iters = strtol(optarg, nullptr, 0);
             break;
+        case 't':
+            usr_par.type = std::string(optarg);
+            break;
         case 'a':
             utils::get_addr(std::string(optarg), (struct sockaddr *) &usr_par.hostaddr);
+            break;
+        case 'k':
+            usr_par.keep_comm = true;
             break;
         }
     }
@@ -91,14 +100,45 @@ int Client::parse_command_line(int argc, char *argv[], user_params &usr_par)
     return 0;
 }
 
+void Client::Barrier(ThreadArgs* args) {
+    thread_local int epoch = 0;
+    static pthread_mutex_t lock[2] = {PTHREAD_MUTEX_INITIALIZER, PTHREAD_MUTEX_INITIALIZER};
+    static pthread_cond_t cond[2] = {PTHREAD_COND_INITIALIZER, PTHREAD_COND_INITIALIZER};
+    static int counter[2] = {0, 0};
+  
+    pthread_mutex_lock(&lock[epoch]);
+    if(++counter[epoch] == args->nThreads)
+      pthread_cond_broadcast(&cond[epoch]);
+  
+    if(args->thread+1 == args->nThreads) {
+      while(counter[epoch] != args->nThreads)
+        pthread_cond_wait(&cond[epoch], &lock[epoch]);
+      counter[epoch] = 0;
+      pthread_cond_broadcast(&cond[epoch]);
+    }
+    else {
+      while(counter[epoch] != 0)
+        pthread_cond_wait(&cond[epoch], &lock[epoch]);
+    }
+    pthread_mutex_unlock(&lock[epoch]);
+    epoch ^= 1;
+}
+
+int Client::socket_sync(int socket_fd) {
+    char sync = 1;
+    recv(socket_fd, &sync, sizeof(sync), 0);
+    send(socket_fd, &sync, sizeof(sync), 0);
+    return 0;
+}
+
 void* Client::thread_main(void* arg) {
     ThreadArgs* args = static_cast<ThreadArgs*>(arg);
+    //TODO:
+    Client::user_params usr_par = args->usr_par;
     int rank = args->rank;
     int device_count = args->device_count;
-    int port = args->port;
-    unsigned long size = args->size;
-    int iters = args->iters;
     ncclUniqueId nccl_id = args->ncclId;
+    int socket_fd = args->socket_fd;
 
     CUDACHECK(cudaSetDevice(rank));
     ncclComm_t comm;
@@ -108,21 +148,53 @@ void* Client::thread_main(void* arg) {
     float *recv_ptr;
     cudaStream_t s;
 
-    CUDACHECK(cudaMalloc(&send_ptr, 10000 * sizeof(float)));
-    CUDACHECK(cudaMalloc(&recv_ptr, 10000 * sizeof(float)));
+    CUDACHECK(cudaMalloc(&send_ptr, usr_par.size * sizeof(float)));
+    CUDACHECK(cudaMalloc(&recv_ptr, usr_par.size * sizeof(float)));
     CUDACHECK(cudaStreamCreate(&s));
 
+    InitData(send_ptr, usr_par.size * sizeof(float), ncclFloat, s);
 
-    InitData(send_ptr, 10000 * sizeof(float), ncclFloat, s);
-    NCCLCHECK(ncclAllReduce(send_ptr, recv_ptr, 10000, ncclFloat, ncclSum, comm, s));
+    CUDACHECK(cudaStreamSynchronize(s));
+    Barrier(args);
+    if (rank == 0) {socket_sync(socket_fd); }
+    Barrier(args); 
 
-    std::cout << "AllReduce done." << std::endl;
+    if(keep_comm){
+        while(1){
+            Barrier(args);
+            LINKPING_WARMUP("ncclAllReduce", 
+                            NCCLCHECK(ncclAllReduce(send_ptr, recv_ptr, usr_par.size, ncclFloat, ncclSum, comm, s)); 
+                            CUDACHECK(cudaStreamSynchronize(s)), s, WARMUP_ITERS);
+            LINKPING_TIMER("ncclAllReduce", 
+                           NCCLCHECK(ncclAllReduce(send_ptr, recv_ptr, usr_par.size, ncclFloat, ncclSum, comm, s)); 
+                           CUDACHECK(cudaStreamSynchronize(s)), s, usr_par.size, sizeof(float), device_count * 2, rank);
+            Barrier(args);
+            if (rank == 0){
+                printf("\n");
+            }
+            Barrier(args);
+        }
+    } else {
+        for(int i = 0; i < usr_par.iters; i++){
+            Barrier(args);
+            LINKPING_WARMUP("ncclAllReduce", 
+                            NCCLCHECK(ncclAllReduce(send_ptr, recv_ptr, usr_par.size, ncclFloat, ncclSum, comm, s)); 
+                            CUDACHECK(cudaStreamSynchronize(s)), s, WARMUP_ITERS);
+            LINKPING_TIMER("ncclAllReduce", 
+                           NCCLCHECK(ncclAllReduce(send_ptr, recv_ptr, usr_par.size, ncclFloat, ncclSum, comm, s)); 
+                           CUDACHECK(cudaStreamSynchronize(s)), s, usr_par.size, sizeof(float), device_count * 2, rank);
+            Barrier(args);
+            if (rank == 0){
+                printf("\n");
+            }
+            Barrier(args); 
+        }
+    }
 
     CUDACHECK(cudaStreamSynchronize(s));
     CUDACHECK(cudaFree(send_ptr));
     CUDACHECK(cudaFree(recv_ptr));
     CUDACHECK(cudaStreamDestroy(s));
-
     NCCLCHECK(ncclCommDestroy(comm));
     return nullptr;
 }
@@ -170,9 +242,10 @@ int Client::main(int argc, char *argv[]) {
 
     ThreadArgs thread_args[device_count];
     for (int i = 0; i < device_count; i++) {
-        thread_args[i].port = usr_par.port;
-        thread_args[i].size = usr_par.size;
-        thread_args[i].iters = usr_par.iters;
+        thread_args[i].usr_par = usr_par;
+        thread_args[i].thread = i;
+        thread_args[i].nThreads = device_count;
+        thread_args[i].socket_fd = *sockfd_ptr;
         thread_args[i].ncclId = ncclId;
         thread_args[i].rank = i;
         thread_args[i].device_count = device_count;
@@ -188,7 +261,7 @@ int Client::main(int argc, char *argv[]) {
         pthread_join(threads[i], NULL);
     }
 
-    std::cout << "All threads joined." << std::endl;
+    std::cout << "All threads joined. " << std::endl;
     //FIXME:
 
     return 0;

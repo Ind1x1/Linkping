@@ -22,6 +22,7 @@ limitations under the License.
 #include <nccl.h>
 #include <stdio.h>
 #include <pthread.h>
+#include <functional>
 
 #define CUDACHECK(cmd)                                                                              \
     do {                                                                                            \
@@ -56,12 +57,33 @@ typedef enum {
     } while (0)
 
 #define DEFAULT_DEVICES_NUM 8
+#define WARMUP_ITERS 5
+
+class LinkPingTimer {
+public:
+    static void TimerProfile(const char* op_name, std::function<void()> func, cudaStream_t stream, 
+                           size_t count, int typesize, int nranks, int rank);
+    static void Warmup(const char* op_name, std::function<void()> func, cudaStream_t stream, int warmup_iters);
+};
+
+//LINKPING_TIMER("ncclAllReduce", 
+//               NCCLCHECK(ncclAllReduce(send_ptr, recv_ptr, 10000, ncclFloat, ncclSum, comm, s)); 
+//               CUDACHECK(cudaStreamSynchronize(s)), s);
+// 用于 profile
+#define LINKPING_TIMER(name, code_block, stream, count, typesize, nranks, rank) \
+    LinkPingTimer::TimerProfile(name, [&]() { code_block; }, stream, count, typesize, nranks, rank)
+
+// warmup 5 次
+// LINKPING_WARMUP("ncclAllReduce", 
+//     NCCLCHECK(ncclAllReduce(send_ptr, recv_ptr, usr_par.size, ncclFloat, ncclSum, comm, s)), s, 5);
+#define LINKPING_WARMUP(name, code_block, stream, warmup_iters)                                     \
+    LinkPingTimer::Warmup(name, [&]() { code_block; }, stream, warmup_iters)
 
 template<typename T>
 __global__ void InitDataKernel(T*data, size_t size);
 
-void InitData(void* data_ptr, size_t size, ncclDataType_t type, cudaStream_t stream);
+extern void InitData(void* data_ptr, size_t size, ncclDataType_t type, cudaStream_t stream);
 
-void AllReduceGetBw(size_t count, int typesize, double sec, double* algBw, double* busBw, int nranks);
+extern void AllReduceGetBw(size_t count, int typesize, double sec, double* algBw, double* busBw, int nranks);
 
 #endif // COMM_CUH

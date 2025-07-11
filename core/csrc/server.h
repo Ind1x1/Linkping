@@ -21,15 +21,19 @@ limitations under the License.
 
 #define RDMA_ACK_MSG "Linkping rdma_task completed"
 
+#define SERVER 1
+
 class Server {
 public:
     struct user_params {
         int                   persistent = 0;
         int                   port = 18515;
-        unsigned long         size = 4096;
-        int                   iters = 1000;
+        unsigned long         size = 10000;
+        int                   iters = 10;
+        std::string           type = "float";
         int                   num_sges = 0;
         struct sockaddr       hostaddr{};
+        bool                  keep_comm = false;
         int                   rdma = 0;
         int                   nvlink = 0;
     };
@@ -54,18 +58,18 @@ public:
 
 private:
     struct ThreadArgs {
-        int                   persistent = 0;
-        int                   port = 18515;
-        unsigned long         size = 4096;
-        int                   iters = 1000;
-        int                   num_sges = 0;
-        int                   rdma = 0;
-        int                   nvlink = 0;
+        Server::user_params   usr_par;
+        int                   thread;
+        int                   nThreads;
+        int                   socket_fd;
         int                   rank;
         int                   device_count;
         ncclUniqueId          ncclId;
     };
 
+    static void Barrier(ThreadArgs* args);
+
     static void* thread_main(void* arg);
-   
+    
+    static int socket_sync(int socket_fd);
 };

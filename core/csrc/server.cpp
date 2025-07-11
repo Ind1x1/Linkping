@@ -49,6 +49,7 @@ void Server::usage(const char *argv0){
               << " -p, --port=PORT    Set the port to listen on (default: 18515)\n"
               << " -s, --size=SIZE    Set the size of the message to send (default: 4096)\n"
               << " -n, --iters=ITERS  Set the number of iterations to run (default: 1000)\n"
+              << " -t, --type=TYPE    Set the type of the message to send (default: float)\n"
               << " -a, --addr=ADDR    Set the address to connect to (default: 127.0.0.1)\n"
               << std::endl;
 }
@@ -63,13 +64,15 @@ int Server::parse_command_line(int argc, char *argv[], user_params &usr_par)
             { "port",          1, nullptr, 'p' },
             { "size",          1, nullptr, 's' },
             { "iters",         1, nullptr, 'n' },
+            { "type",          1, nullptr, 't' },
             { "sg_list-len",   1, nullptr, 'l' },
             { "debug-mask",    1, nullptr, 'D' },
             { "rd",            0, nullptr, 'R' },
             { "nv",            0, nullptr, 'N' },
+            { "keep-comm",     0, nullptr, 'k' },
             { 0 }
         };
-        c = getopt_long(argc, argv, "Pra:p:s:n:l:D:RN", long_options, nullptr);
+        c = getopt_long(argc, argv, "Pra:p:s:n:t:l:D:RNk", long_options, nullptr);
         if (c == -1)
             break;
         switch (c) {
@@ -92,6 +95,9 @@ int Server::parse_command_line(int argc, char *argv[], user_params &usr_par)
         case 'n':
             usr_par.iters = strtol(optarg, nullptr, 0);
             break;
+        case 't':
+            usr_par.type = std::string(optarg);
+            break;
         case 'l':
             usr_par.num_sges = strtol(optarg, nullptr, 0);
             break;
@@ -105,6 +111,9 @@ int Server::parse_command_line(int argc, char *argv[], user_params &usr_par)
         case 'N':
             usr_par.nvlink = 1;
             break;
+        case 'k':
+            usr_par.keep_comm = true;
+            break;
         default:
             usage(argv[0]);
             return 1;
@@ -117,18 +126,46 @@ int Server::parse_command_line(int argc, char *argv[], user_params &usr_par)
     return 0;
 }
 
+int Server::socket_sync(int socket_fd) {
+    char sync = 1;
+    send(socket_fd, &sync, sizeof(sync), 0);
+    recv(socket_fd, &sync, sizeof(sync), 0);
+    return 0;
+}
+
+void Server::Barrier(ThreadArgs* args) {
+    thread_local int epoch = 0;
+    static pthread_mutex_t lock[2] = {PTHREAD_MUTEX_INITIALIZER, PTHREAD_MUTEX_INITIALIZER};
+    static pthread_cond_t cond[2] = {PTHREAD_COND_INITIALIZER, PTHREAD_COND_INITIALIZER};
+    static int counter[2] = {0, 0};
+  
+    pthread_mutex_lock(&lock[epoch]);
+    if(++counter[epoch] == args->nThreads)
+      pthread_cond_broadcast(&cond[epoch]);
+  
+    if(args->thread+1 == args->nThreads) {
+      while(counter[epoch] != args->nThreads)
+        pthread_cond_wait(&cond[epoch], &lock[epoch]);
+      counter[epoch] = 0;
+      pthread_cond_broadcast(&cond[epoch]);
+    }
+    else {
+      while(counter[epoch] != 0)
+        pthread_cond_wait(&cond[epoch], &lock[epoch]);
+    }
+    pthread_mutex_unlock(&lock[epoch]);
+    epoch ^= 1;
+}
+
 void* Server::thread_main(void* arg) {
     ThreadArgs* args = static_cast<ThreadArgs*>(arg);
+    //TODO:
     int rank = args->rank;
     int device_count = args->device_count;
-    int persistent = args->persistent;
-    int port = args->port;
-    unsigned long size = args->size;
-    int iters = args->iters;
-    int num_sges = args->num_sges;
-    int rdma = args->rdma;
-    int nvlink = args->nvlink;
+    Server::user_params usr_par = args->usr_par;
     ncclUniqueId nccl_id = args->ncclId;
+    int socket_fd = args->socket_fd;
+    bool keep_comm = usr_par.keep_comm;
 
     CUDACHECK(cudaSetDevice(rank));
     ncclComm_t comm;
@@ -138,15 +175,49 @@ void* Server::thread_main(void* arg) {
     float *recv_ptr;
     cudaStream_t s;
 
-    CUDACHECK(cudaMalloc(&send_ptr, 10000 * sizeof(float)));
-    CUDACHECK(cudaMalloc(&recv_ptr, 10000 * sizeof(float)));
+    CUDACHECK(cudaMalloc(&send_ptr, usr_par.size * sizeof(float)));
+    CUDACHECK(cudaMalloc(&recv_ptr, usr_par.size * sizeof(float)));
     CUDACHECK(cudaStreamCreate(&s));
 
-    InitData(send_ptr, 10000 * sizeof(float), ncclFloat, s);
-    NCCLCHECK(ncclAllReduce(send_ptr, recv_ptr, 10000, ncclFloat, ncclSum, comm, s));
+    InitData(send_ptr, usr_par.size * sizeof(float), ncclFloat, s);
+    CUDACHECK(cudaStreamSynchronize(s));
 
-    std::cout << "AllReduce done." << std::endl;
+    Barrier(args);
+    if (rank == 0) {socket_sync(socket_fd);}
+    Barrier(args);
 
+    if(keep_comm){
+        while(1){
+            Barrier(args);
+            LINKPING_WARMUP("ncclAllReduce", 
+                            NCCLCHECK(ncclAllReduce(send_ptr, recv_ptr, usr_par.size, ncclFloat, ncclSum, comm, s)); 
+                            CUDACHECK(cudaStreamSynchronize(s)), s, WARMUP_ITERS);
+            LINKPING_TIMER("ncclAllReduce", 
+                           NCCLCHECK(ncclAllReduce(send_ptr, recv_ptr, usr_par.size, ncclFloat, ncclSum, comm, s)); 
+                           CUDACHECK(cudaStreamSynchronize(s)), s, usr_par.size, sizeof(float), device_count * 2, rank);
+            Barrier(args);
+            if (rank == 0){
+                printf("\n");
+            }
+            Barrier(args);
+        }
+    } else {
+        for(int i = 0; i < usr_par.iters; i++){
+            Barrier(args);
+            LINKPING_WARMUP("ncclAllReduce", 
+                            NCCLCHECK(ncclAllReduce(send_ptr, recv_ptr, usr_par.size, ncclFloat, ncclSum, comm, s)); 
+                            CUDACHECK(cudaStreamSynchronize(s)), s, WARMUP_ITERS);
+            LINKPING_TIMER("ncclAllReduce", 
+                           NCCLCHECK(ncclAllReduce(send_ptr, recv_ptr, usr_par.size, ncclFloat, ncclSum, comm, s)); 
+                           CUDACHECK(cudaStreamSynchronize(s)), s, usr_par.size, sizeof(float), device_count * 2, rank);
+            Barrier(args);
+            if (rank == 0){
+                printf("\n");
+            }
+            Barrier(args); 
+        }
+    }
+    
     CUDACHECK(cudaStreamSynchronize(s));
     CUDACHECK(cudaFree(send_ptr));
     CUDACHECK(cudaFree(recv_ptr));
@@ -199,13 +270,10 @@ int Server::main(int argc, char *argv[]) {
 
     ThreadArgs thread_args[device_count];
     for (int i = 0; i < device_count; i++) {
-        thread_args[i].persistent = usr_par.persistent;
-        thread_args[i].port = usr_par.port;
-        thread_args[i].size = usr_par.size;
-        thread_args[i].iters = usr_par.iters;
-        thread_args[i].num_sges = usr_par.num_sges;
-        thread_args[i].rdma = usr_par.rdma;
-        thread_args[i].nvlink = usr_par.nvlink;
+        thread_args[i].usr_par = usr_par;
+        thread_args[i].thread = i;
+        thread_args[i].nThreads = device_count;
+        thread_args[i].socket_fd = *sockfd_ptr;
         thread_args[i].rank = i;
         thread_args[i].device_count = device_count;
         thread_args[i].ncclId = ncclId;
