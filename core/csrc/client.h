@@ -21,7 +21,7 @@ limitations under the License.
 
 #define RDMA_ACK_MSG "Linkping rdma_task completed"
 
-
+#define CLIENT 1
 
 class Client {
 public:
@@ -59,10 +59,15 @@ public:
 private:
     struct ThreadArgs {
         Client::user_params     usr_par;
+        int                     thread;
+        int                     nThreads;
+        int                     socket_fd;
         ncclUniqueId            ncclId;
         int                     rank;
         int                     device_count;
     };
 
+    static int socket_sync(int socket_fd);
+    static void Barrier(ThreadArgs* args);
     static void* thread_main(void* arg);
 };

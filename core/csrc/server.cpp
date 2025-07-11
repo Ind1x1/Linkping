@@ -122,6 +122,37 @@ int Server::parse_command_line(int argc, char *argv[], user_params &usr_par)
     return 0;
 }
 
+int Server::socket_sync(int socket_fd) {
+    char sync = 1;
+    send(socket_fd, &sync, sizeof(sync), 0);
+    recv(socket_fd, &sync, sizeof(sync), 0);
+    return 0;
+}
+
+void Server::Barrier(ThreadArgs* args) {
+    thread_local int epoch = 0;
+    static pthread_mutex_t lock[2] = {PTHREAD_MUTEX_INITIALIZER, PTHREAD_MUTEX_INITIALIZER};
+    static pthread_cond_t cond[2] = {PTHREAD_COND_INITIALIZER, PTHREAD_COND_INITIALIZER};
+    static int counter[2] = {0, 0};
+  
+    pthread_mutex_lock(&lock[epoch]);
+    if(++counter[epoch] == args->nThreads)
+      pthread_cond_broadcast(&cond[epoch]);
+  
+    if(args->thread+1 == args->nThreads) {
+      while(counter[epoch] != args->nThreads)
+        pthread_cond_wait(&cond[epoch], &lock[epoch]);
+      counter[epoch] = 0;
+      pthread_cond_broadcast(&cond[epoch]);
+    }
+    else {
+      while(counter[epoch] != 0)
+        pthread_cond_wait(&cond[epoch], &lock[epoch]);
+    }
+    pthread_mutex_unlock(&lock[epoch]);
+    epoch ^= 1;
+}
+
 void* Server::thread_main(void* arg) {
     ThreadArgs* args = static_cast<ThreadArgs*>(arg);
     //TODO:
@@ -129,6 +160,7 @@ void* Server::thread_main(void* arg) {
     int device_count = args->device_count;
     Server::user_params usr_par = args->usr_par;
     ncclUniqueId nccl_id = args->ncclId;
+    int socket_fd = args->socket_fd;
 
     CUDACHECK(cudaSetDevice(rank));
     ncclComm_t comm;
@@ -143,6 +175,15 @@ void* Server::thread_main(void* arg) {
     CUDACHECK(cudaStreamCreate(&s));
 
     InitData(send_ptr, usr_par.size * sizeof(float), ncclFloat, s);
+    CUDACHECK(cudaStreamSynchronize(s));
+    Barrier(args);
+    if (rank == 0) {socket_sync(socket_fd);}
+    Barrier(args);
+
+    LINKPING_WARMUP("ncclAllReduce", 
+                    NCCLCHECK(ncclAllReduce(send_ptr, recv_ptr, usr_par.size, ncclFloat, ncclSum, comm, s)); 
+                    CUDACHECK(cudaStreamSynchronize(s)), s, 5);
+    Barrier(args); 
     for(int i = 0; i < usr_par.iters; i++){
         LINKPING_TIMER("ncclAllReduce", 
                        NCCLCHECK(ncclAllReduce(send_ptr, recv_ptr, usr_par.size, ncclFloat, ncclSum, comm, s)); 
@@ -150,6 +191,7 @@ void* Server::thread_main(void* arg) {
         if (rank == 0){
             printf("==============================================\n");
         }
+        Barrier(args);
     }
 
     CUDACHECK(cudaStreamSynchronize(s));
@@ -205,6 +247,9 @@ int Server::main(int argc, char *argv[]) {
     ThreadArgs thread_args[device_count];
     for (int i = 0; i < device_count; i++) {
         thread_args[i].usr_par = usr_par;
+        thread_args[i].thread = i;
+        thread_args[i].nThreads = device_count;
+        thread_args[i].socket_fd = *sockfd_ptr;
         thread_args[i].rank = i;
         thread_args[i].device_count = device_count;
         thread_args[i].ncclId = ncclId;
