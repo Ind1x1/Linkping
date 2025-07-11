@@ -31,6 +31,7 @@ public:
         int                     iters= 10;
         std::string             type = "float";
         std::string             servername;
+        bool                    keep_comm = false;
         struct sockaddr         hostaddr{};
     };
     /**
