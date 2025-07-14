@@ -57,6 +57,9 @@ Offline-SGBDs
 *.msi
 *.zip
 *.7z
+*.txz
+*.o
+nccl*
 
 # Exclude default and custom temporary directories
 Backup_*
