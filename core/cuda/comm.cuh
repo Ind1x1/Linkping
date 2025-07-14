@@ -70,11 +70,9 @@ public:
 //LINKPING_TIMER("ncclAllReduce", 
 //               NCCLCHECK(ncclAllReduce(send_ptr, recv_ptr, 10000, ncclFloat, ncclSum, comm, s)); 
 //               CUDACHECK(cudaStreamSynchronize(s)), s);
-// 用于 profile
 #define LINKPING_TIMER(name, code_block, stream, count, typesize, nranks, rank)                     \
     LinkPingTimer::TimerProfile(name, [&]() { code_block; }, stream, count, typesize, nranks, rank)
 
-// warmup 5 次
 // LINKPING_WARMUP("ncclAllReduce", 
 //     NCCLCHECK(ncclAllReduce(send_ptr, recv_ptr, usr_par.size, ncclFloat, ncclSum, comm, s)), s, 5);
 #define LINKPING_WARMUP(name, code_block, stream, warmup_iters)                                     \
@@ -87,7 +85,19 @@ template<typename T>
 __global__ void InitDataKernel(T*data, size_t size);
 
 extern void InitData(void* data_ptr, size_t size, ncclDataType_t type, cudaStream_t stream);
+template<typename T>
 extern void Launch_linkpingp2p(T *dest, T const *src, size_t num_elems, cudaStream_t stream);
+template<typename T>
+extern float Launch_linkpingp2p_ll(T *dest, T const *src, size_t num_elems, cudaStream_t stream);
+template<typename T>
+extern float Launch_linkpingp2p_ll128(T *dest, T const *src, size_t num_elems, cudaStream_t stream);
+template<typename T>
+extern float Launch_linkpingp2p_simple(T *dest, T const *src, size_t num_elems, cudaStream_t stream);
+
+extern template float Launch_linkpingp2p_simple<float>(float*, const float*, size_t, cudaStream_t);
+extern template float Launch_linkpingp2p_ll<float>(float*, const float*, size_t, cudaStream_t);
+extern template float Launch_linkpingp2p_ll128<float>(float*, const float*, size_t, cudaStream_t);
+
 extern void AllReduceGetBw(size_t count, int typesize, double sec, double* algBw, double* busBw, int nranks);
 
 #endif // COMM_CUH

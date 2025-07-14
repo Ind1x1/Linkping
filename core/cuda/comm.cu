@@ -41,6 +41,142 @@ __global__ void linkping_p2p(T *__restrict__ dest, T const *__restrict__ src, si
 }
 
 template<typename T>
+__global__ void linkping_p2p_ll(T *__restrict__ dest, T const *__restrict__ src, size_t num_elems)
+{
+
+    constexpr int VECTOR_SIZE = sizeof(T) >= 8 ? 2 : 4; 
+    using VecType = typename std::conditional<sizeof(T) >= 8, 
+                                             typename std::conditional<sizeof(T) == 8, double2, float4>::type,
+                                             float4>::type;
+    
+    size_t globalId = blockIdx.x * blockDim.x + threadIdx.x;
+    size_t gridSize = blockDim.x * gridDim.x;
+    size_t vectorized_elems = (num_elems / VECTOR_SIZE) * VECTOR_SIZE;
+    size_t i = globalId * VECTOR_SIZE;
+    for (; i < vectorized_elems; i += gridSize * VECTOR_SIZE) {
+        VecType* vec_dest = reinterpret_cast<VecType*>(dest + i);
+        const VecType* vec_src = reinterpret_cast<const VecType*>(src + i);
+        *vec_dest = *vec_src;
+    }
+    for (size_t j = i; j < num_elems; j += gridSize) {
+        dest[j] = src[j];
+    }
+}
+
+template<typename T>
+__global__ void linkping_p2p_ll128(T *__restrict__ dest, T const *__restrict__ src, size_t num_elems)
+{
+    constexpr int VECTOR_SIZE = 128 / sizeof(T);
+    using VecType = typename std::conditional<sizeof(T) == 4, float4,
+                                             typename std::conditional<sizeof(T) == 8, double2, float4>::type>::type;
+    
+    size_t globalId = blockIdx.x * blockDim.x + threadIdx.x;
+    size_t gridSize = blockDim.x * gridDim.x;
+    
+    size_t aligned_elems = (num_elems / VECTOR_SIZE) * VECTOR_SIZE;
+    size_t i = globalId * VECTOR_SIZE;
+    
+    for (; i < aligned_elems; i += gridSize * VECTOR_SIZE) {
+        VecType* vec_dest = reinterpret_cast<VecType*>(dest + i);
+        const VecType* vec_src = reinterpret_cast<const VecType*>(src + i);
+        *vec_dest = *vec_src;
+    }
+    
+    for (size_t j = i; j < num_elems; j += gridSize) {
+        dest[j] = src[j];
+    }
+}
+
+template<typename T>
+__global__ void linkping_p2p_simple(T *__restrict__ dest, T const *__restrict__ src, size_t num_elems)
+{
+
+    size_t globalId = blockIdx.x * blockDim.x + threadIdx.x;
+    size_t gridSize = blockDim.x * gridDim.x;
+
+    for (size_t i = globalId; i < num_elems; i += gridSize) {
+        dest[i] = src[i];
+    }
+}
+
+template<typename T>
+float Launch_linkpingp2p_ll(T *dest, T const *src, size_t num_elems, cudaStream_t stream) {
+    int blockSize = 0;
+    int numBlocks = 0;
+    CUDACHECK(cudaOccupancyMaxPotentialBlockSize(&numBlocks, &blockSize, linkping_p2p_ll<T>));
+    
+    cudaEvent_t start, stop;
+    CUDACHECK(cudaEventCreate(&start));
+    CUDACHECK(cudaEventCreate(&stop));
+    
+    CUDACHECK(cudaEventRecord(start, stream));
+    
+    linkping_p2p_ll<T><<<numBlocks, blockSize, 0, stream>>>(dest, src, num_elems);
+    
+    CUDACHECK(cudaEventRecord(stop, stream));
+    CUDACHECK(cudaEventSynchronize(stop));
+    float elapsed_time = 0.0f;
+    CUDACHECK(cudaEventElapsedTime(&elapsed_time, start, stop));
+    CUDACHECK(cudaEventDestroy(start));
+    CUDACHECK(cudaEventDestroy(stop));
+    
+    CUDACHECK(cudaStreamSynchronize(stream));
+    return elapsed_time;
+}
+
+template<typename T>
+float Launch_linkpingp2p_ll128(T *dest, T const *src, size_t num_elems, cudaStream_t stream) {
+    int blockSize = 0;
+    int numBlocks = 0;
+    CUDACHECK(cudaOccupancyMaxPotentialBlockSize(&numBlocks, &blockSize, linkping_p2p_ll128<T>));
+    cudaEvent_t start, stop;
+    CUDACHECK(cudaEventCreate(&start));
+    CUDACHECK(cudaEventCreate(&stop));
+    
+    CUDACHECK(cudaEventRecord(start, stream));
+    
+    linkping_p2p_ll128<T><<<numBlocks, blockSize, 0, stream>>>(dest, src, num_elems);
+    
+    CUDACHECK(cudaEventRecord(stop, stream));
+    CUDACHECK(cudaEventSynchronize(stop));
+    float elapsed_time = 0.0f;
+    CUDACHECK(cudaEventElapsedTime(&elapsed_time, start, stop));
+    CUDACHECK(cudaEventDestroy(start));
+    CUDACHECK(cudaEventDestroy(stop));
+    
+    CUDACHECK(cudaStreamSynchronize(stream));
+    return elapsed_time;
+}
+
+template<typename T>
+float Launch_linkpingp2p_simple(T *dest, T const *src, size_t num_elems, cudaStream_t stream) {
+    int blockSize = 0;
+    int numBlocks = 0;
+    CUDACHECK(cudaOccupancyMaxPotentialBlockSize(&numBlocks, &blockSize, linkping_p2p_simple<T>));
+    cudaEvent_t start, stop;
+    CUDACHECK(cudaEventCreate(&start));
+    CUDACHECK(cudaEventCreate(&stop));
+
+    CUDACHECK(cudaEventRecord(start, stream));
+    
+    linkping_p2p_simple<T><<<numBlocks, blockSize, 0, stream>>>(dest, src, num_elems);
+
+    CUDACHECK(cudaEventRecord(stop, stream));
+    CUDACHECK(cudaEventSynchronize(stop));
+    float elapsed_time = 0.0f;
+    CUDACHECK(cudaEventElapsedTime(&elapsed_time, start, stop));
+    CUDACHECK(cudaEventDestroy(start));
+    CUDACHECK(cudaEventDestroy(stop));
+    
+    CUDACHECK(cudaStreamSynchronize(stream));
+    return elapsed_time;
+}
+
+template float Launch_linkpingp2p_simple<float>(float*, const float*, size_t, cudaStream_t);
+template float Launch_linkpingp2p_ll<float>(float*, const float*, size_t, cudaStream_t);
+template float Launch_linkpingp2p_ll128<float>(float*, const float*, size_t, cudaStream_t);
+
+template<typename T>
 void Launch_linkpingp2p(T *dest, T const *src, size_t num_elems, cudaStream_t stream) {
     int blockSize = 0;
     int numBlocks = 0;
@@ -48,6 +184,11 @@ void Launch_linkpingp2p(T *dest, T const *src, size_t num_elems, cudaStream_t st
     linkping_p2p<T><<<numBlocks, blockSize, 0, stream>>>(dest, src, num_elems);
     CUDACHECK(cudaStreamSynchronize(stream));
 }
+
+template void Launch_linkpingp2p<float>(float*, const float*, size_t, cudaStream_t);
+template void Launch_linkpingp2p<double>(double*, const double*, size_t, cudaStream_t);
+template void Launch_linkpingp2p<int>(int*, const int*, size_t, cudaStream_t);
+template void Launch_linkpingp2p<int64_t>(int64_t*, const int64_t*, size_t, cudaStream_t);
 
 void LinkPingTimer::P2PProfile(std::function<void()> func, cudaStream_t stream, size_t count, int typesize) {
     cudaEvent_t start, stop;
@@ -135,3 +276,4 @@ void InitData(void* data_ptr, size_t size, ncclDataType_t type, cudaStream_t str
         fprintf(stderr, "CUDA kernel launch error: %s\n", cudaGetErrorString(err));
     }
 }
+
