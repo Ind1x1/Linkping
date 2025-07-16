@@ -114,6 +114,11 @@ int P2P::main(int argc, char *argv[]) {
     cudaStream_t s;
     CUDACHECK(cudaSetDevice(usr_par.srcRank));
     float* send_ptr;
+    // 确保size是4的倍数
+    if (usr_par.size % 4 != 0) {
+        usr_par.size = (usr_par.size / 4) * 4;
+        std::cout << "Warning: Size adjusted to " << usr_par.size << " to ensure it's a multiple of 4" << std::endl;
+    }
     CUDACHECK(cudaMalloc(&send_ptr, usr_par.size * sizeof(float)));
     float* recv_ptr;
     CUDACHECK(cudaSetDevice(usr_par.dstRank));
@@ -129,9 +134,13 @@ int P2P::main(int argc, char *argv[]) {
     CUDACHECK(cudaEventCreate(&start));
     CUDACHECK(cudaEventCreate(&stop));
     
+    size_t total_uint4 = usr_par.size / 4;
+    size_t chunkSizeInElement = total_uint4 / (24*512);
+
     for (int i = 0; i < usr_par.iters; i++) {
         float elapsed_time = 0.0f;
-        elapsed_time = Launch_linkpingp2p_simple(recv_ptr, send_ptr, usr_par.size, s);
+        //elapsed_time = Launch_linkpingp2p_simple(recv_ptr, send_ptr, usr_par.size, s);
+        elapsed_time = Launch_stridingMemcpy(reinterpret_cast<uint4*>(recv_ptr), reinterpret_cast<uint4*>(send_ptr), chunkSizeInElement, s);
         double total_bytes = static_cast<double>(usr_par.size) * sizeof(float);
         double bandwidth = total_bytes / (elapsed_time / 1000.0) / 1e9; // GB/s
         std::cout << std::setw(12) << std::left << (usr_par.size * sizeof(float))

@@ -172,6 +172,87 @@ float Launch_linkpingp2p_simple(T *dest, T const *src, size_t num_elems, cudaStr
     return elapsed_time;
 }
 
+__global__ void stridingMemcpyKernel(unsigned int totalThreadCount, unsigned long long loopCount, uint4* dst, uint4* src, size_t chunkSizeInElement) {
+    unsigned long long from = blockDim.x * blockIdx.x + thr
+    uneadIdx.x;signed long long bigChunkSizeInElement = chunkSizeInElement / 12;
+    dst += from;
+    src += from;
+    uint4* dstBigEnd = dst + (bigChunkSizeInElement * 12) * totalThreadCount;
+    uint4* dstEnd = dst + chunkSizeInElement * totalThreadCount;
+
+    for (unsigned int i = 0; i < loopCount; i++) {
+        uint4* cdst = dst;
+        uint4* csrc = src;
+
+        while (cdst < dstBigEnd) {
+            uint4 pipe_0 = *csrc; csrc += totalThreadCount;
+            uint4 pipe_1 = *csrc; csrc += totalThreadCount;
+            uint4 pipe_2 = *csrc; csrc += totalThreadCount;
+            uint4 pipe_3 = *csrc; csrc += totalThreadCount;
+            uint4 pipe_4 = *csrc; csrc += totalThreadCount;
+            uint4 pipe_5 = *csrc; csrc += totalThreadCount;
+            uint4 pipe_6 = *csrc; csrc += totalThreadCount;
+            uint4 pipe_7 = *csrc; csrc += totalThreadCount;
+            uint4 pipe_8 = *csrc; csrc += totalThreadCount;
+            uint4 pipe_9 = *csrc; csrc += totalThreadCount;
+            uint4 pipe_10 = *csrc; csrc += totalThreadCount;
+            uint4 pipe_11 = *csrc; csrc += totalThreadCount;
+
+            *cdst = pipe_0; cdst += totalThreadCount;
+            *cdst = pipe_1; cdst += totalThreadCount;
+            *cdst = pipe_2; cdst += totalThreadCount;
+            *cdst = pipe_3; cdst += totalThreadCount;
+            *cdst = pipe_4; cdst += totalThreadCount;
+            *cdst = pipe_5; cdst += totalThreadCount;
+            *cdst = pipe_6; cdst += totalThreadCount;
+            *cdst = pipe_7; cdst += totalThreadCount;
+            *cdst = pipe_8; cdst += totalThreadCount;
+            *cdst = pipe_9; cdst += totalThreadCount;
+            *cdst = pipe_10; cdst += totalThreadCount;
+            *cdst = pipe_11; cdst += totalThreadCount;
+        }
+
+        while (cdst < dstEnd) {
+            *cdst = *csrc; cdst += totalThreadCount; csrc += totalThreadCount;
+        }
+    }
+}
+
+void Launch_stridingMemcpy(uint4* dst, uint4* src, size_t chunkSizeInElement, cudaStream_t stream) {
+    const int numBlocks = 24;
+    const int blockSize = 512;
+    unsigned int totalThreadCount = numBlocks * blockSize;
+    unsigned long long loopCount = 10; 
+
+    cudaEvent_t start, stop;
+    CUDACHECK(cudaEventCreate(&start));
+    CUDACHECK(cudaEventCreate(&stop));
+
+    CUDACHECK(cudaEventRecord(start, stream));
+
+    stridingMemcpyKernel<<<numBlocks, blockSize, 0, stream>>>(
+        totalThreadCount,
+        loopCount,
+        dst,
+        src,
+        chunkSizeInElement
+    );
+
+    CUDACHECK(cudaEventRecord(stop, stream));
+    CUDACHECK(cudaEventSynchronize(stop));
+    float elapsed_time = 0.0f;
+    CUDACHECK(cudaEventElapsedTime(&elapsed_time, start, stop));
+    CUDACHECK(cudaEventDestroy(start));
+    CUDACHECK(cudaEventDestroy(stop));
+    CUDACHECK(cudaStreamSynchronize(stream));
+    cudaError_t err = cudaGetLastError();
+    if (err != cudaSuccess) {
+        printf("stridingMemcpyKernel launch failed: %s\n", cudaGetErrorString(err));
+    }
+    return elapsed_time / 10;
+
+}
+
 template float Launch_linkpingp2p_simple<float>(float*, const float*, size_t, cudaStream_t);
 template float Launch_linkpingp2p_ll<float>(float*, const float*, size_t, cudaStream_t);
 template float Launch_linkpingp2p_ll128<float>(float*, const float*, size_t, cudaStream_t);
