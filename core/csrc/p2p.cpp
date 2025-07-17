@@ -50,6 +50,7 @@ int P2P::parse_command_line(int argc, char *argv[], user_params &usr_par)
             { "size",          1, nullptr, 's' },
             { "iters",         1, nullptr, 'n' },
             { "type",          1, nullptr, 't' },
+            { "keep_running",  0, nullptr, 'k' },
             { "srcRank",       1, nullptr, 'r' },
             { "dstRank",       1, nullptr, 'd' },
             { 0 }
@@ -72,6 +73,9 @@ int P2P::parse_command_line(int argc, char *argv[], user_params &usr_par)
             break;
         case 'd':
             usr_par.dstRank = strtol(optarg, nullptr, 0);
+            break;
+        case 'k':
+            usr_par.keep_running = true;
             break;
         }
     }
@@ -106,9 +110,13 @@ int P2P::main(int argc, char *argv[]) {
     }
     std::cout << std::string(100, '-') << std::endl;
     std::cout << "srcRank: " << usr_par.srcRank << ", dstRank: " << usr_par.dstRank << std::endl;
-    std::cout << "size: " << usr_par.size << ", iters: " << usr_par.iters << std::endl;
+    std::cout << "Size: " << usr_par.size << std::endl;
+    std::cout << "iters: " << (usr_par.keep_running ? "Loop" : std::to_string(usr_par.iters))
+          << std::endl;
     std::cout << "type: " << usr_par.type << std::endl;
-    std::cout << "canAccessPeer: " << canAccessPeer << std::endl;
+    std::cout << "P2P can Access: "
+          << (canAccessPeer ? "Nvlink" : "PCIe")
+          << std::endl;
     std::cout << std::string(100, '-') << std::endl;
 
     cudaStream_t s;
@@ -129,13 +137,33 @@ int P2P::main(int argc, char *argv[]) {
     std::cout << std::setw(20) << std::left << "#bytes" 
               << std::setw(20) << std::left << "#iterations" 
               << std::setw(20) << std::left << "#overhead(ms)" 
-              << std::setw(20) << std::left << "#bandwidth(GB/s)" << std::endl;
+              << std::setw(20) << std::left << "#bandwidth(GB/s)" 
+              << std::setw(20) << std::left << "#Total(GB)" << std::endl;
     cudaEvent_t start, stop;
     CUDACHECK(cudaEventCreate(&start));
     CUDACHECK(cudaEventCreate(&stop));
     
     size_t total_uint4 = usr_par.size / 4;
-    size_t chunkSizeInElement = total_uint4 / (24*512);
+    size_t chunkSizeInElement = total_uint4 / (96*512);
+
+    int total_GB = 0;
+    if (usr_par.keep_running) {
+        int i = 1;
+        while(1) {
+        float elapsed_time = 0.0f;
+        //elapsed_time = Launch_linkpingp2p_simple(recv_ptr, send_ptr, usr_par.size, s);
+        elapsed_time = Launch_stridingMemcpy(reinterpret_cast<uint4*>(recv_ptr), reinterpret_cast<uint4*>(send_ptr), chunkSizeInElement, s);
+        double total_bytes = static_cast<double>(usr_par.size) * sizeof(float);
+        double bandwidth = total_bytes / (elapsed_time / 1000.0) / 1e9; // GB/s
+        total_GB += total_bytes / 1e9;
+        std::cout << std::setw(20) << std::left << std::scientific << (usr_par.size * sizeof(float)) << std::fixed
+                  << std::setw(20) << std::left << (i+1)
+                  << std::setw(20) << std::left << std::fixed << std::setprecision(2) << elapsed_time
+                  << std::setw(20) << std::left << std::fixed << std::setprecision(4) << bandwidth 
+                  << std::setw(20) << std::left << (total_GB) << std::endl;
+        i++;
+        }
+    }
 
     for (int i = 0; i < usr_par.iters; i++) {
         float elapsed_time = 0.0f;
@@ -143,10 +171,12 @@ int P2P::main(int argc, char *argv[]) {
         elapsed_time = Launch_stridingMemcpy(reinterpret_cast<uint4*>(recv_ptr), reinterpret_cast<uint4*>(send_ptr), chunkSizeInElement, s);
         double total_bytes = static_cast<double>(usr_par.size) * sizeof(float);
         double bandwidth = total_bytes / (elapsed_time / 1000.0) / 1e9; // GB/s
-        std::cout << std::setw(12) << std::left << (usr_par.size * sizeof(float))
-                  << std::setw(12) << std::left << (i+1)
-                  << std::setw(12) << std::left << std::fixed << std::setprecision(2) << elapsed_time
-                  << std::setw(15) << std::left << std::fixed << std::setprecision(4) << bandwidth << std::endl;
+        total_GB += total_bytes / 1e9;
+        std::cout << std::setw(20) << std::left << std::scientific << (usr_par.size * sizeof(float)) << std::fixed
+                  << std::setw(20) << std::left << (i+1)
+                  << std::setw(20) << std::left << std::fixed << std::setprecision(2) << elapsed_time
+                  << std::setw(20) << std::left << std::fixed << std::setprecision(4) << bandwidth 
+                  << std::setw(20) << std::left << (total_GB) << std::endl;
     }
     
     CUDACHECK(cudaEventDestroy(start));

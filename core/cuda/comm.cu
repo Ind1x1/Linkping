@@ -173,8 +173,8 @@ float Launch_linkpingp2p_simple(T *dest, T const *src, size_t num_elems, cudaStr
 }
 
 __global__ void stridingMemcpyKernel(unsigned int totalThreadCount, unsigned long long loopCount, uint4* dst, uint4* src, size_t chunkSizeInElement) {
-    unsigned long long from = blockDim.x * blockIdx.x + thr
-    uneadIdx.x;signed long long bigChunkSizeInElement = chunkSizeInElement / 12;
+    unsigned long long from = blockDim.x * blockIdx.x + threadIdx.x;
+    unsigned long long bigChunkSizeInElement = chunkSizeInElement / 12;
     dst += from;
     src += from;
     uint4* dstBigEnd = dst + (bigChunkSizeInElement * 12) * totalThreadCount;
@@ -219,7 +219,7 @@ __global__ void stridingMemcpyKernel(unsigned int totalThreadCount, unsigned lon
 }
 
 void Launch_stridingMemcpy(uint4* dst, uint4* src, size_t chunkSizeInElement, cudaStream_t stream) {
-    const int numBlocks = 24;
+    const int numBlocks = 96;
     const int blockSize = 512;
     unsigned int totalThreadCount = numBlocks * blockSize;
     unsigned long long loopCount = 10; 
