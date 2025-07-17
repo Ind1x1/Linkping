@@ -94,6 +94,8 @@ extern float Launch_linkpingp2p_ll128(T *dest, T const *src, size_t num_elems, c
 template<typename T>
 extern float Launch_linkpingp2p_simple(T *dest, T const *src, size_t num_elems, cudaStream_t stream);
 
+extern void Launch_stridingMemcpy(uint4* dst, uint4* src, size_t chunkSizeInElement, cudaStream_t stream);
+
 extern template float Launch_linkpingp2p_simple<float>(float*, const float*, size_t, cudaStream_t);
 extern template float Launch_linkpingp2p_ll<float>(float*, const float*, size_t, cudaStream_t);
 extern template float Launch_linkpingp2p_ll128<float>(float*, const float*, size_t, cudaStream_t);

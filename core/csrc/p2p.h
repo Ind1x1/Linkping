@@ -20,7 +20,7 @@ limitations under the License.
 class P2P {
     public:
         struct user_params {
-            unsigned long         size = 10000000;
+            unsigned long         size = 10000000000;
             int                   iters = 10;
             std::string           type = "float";
             bool                  keep_running = false;
