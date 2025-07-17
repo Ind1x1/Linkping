@@ -72,6 +72,7 @@ P2P can Access: Nvlink
 ./linkping client -a <ip2> <ip1> -s <size> -n <iteration>
 ```
 
+## 
 *那么你为什么不用官方的nccl-test呢？*
 
 **nvlink across Tray is about to be supported**
